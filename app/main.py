@@ -54,13 +54,14 @@ class TickerScreen(Screen):
         self.set_fullscreen_status(Window.fullscreen)
 
     def build_ui(self):
-        layout = BoxLayout(
-            orientation="vertical",
-            padding=dp(20),
-            spacing=dp(12),
-        )
+        layout = BoxLayout(orientation="vertical")
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        top_bar = BoxLayout(
+            size_hint_y=None,
+            height=dp(56),
+            spacing=dp(8),
+            padding=(dp(12), dp(8)),
+        )
         admin_button = Button(text="Admin")
         admin_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
         open_button = Button(text="Åpne")
@@ -80,6 +81,13 @@ class TickerScreen(Screen):
         self._fullscreen_label.bind(size=self._fullscreen_label.setter("text_size"))
         for widget in (admin_button, open_button, fullscreen_button, self._fullscreen_label):
             top_bar.add_widget(widget)
+
+        content_area = BoxLayout(
+            orientation="vertical",
+            size_hint_y=1,
+            padding=dp(20),
+            spacing=dp(12),
+        )
 
         running_label = Label(
             text="NIE running",
@@ -116,10 +124,12 @@ class TickerScreen(Screen):
         )
         self._subline_label.bind(size=self._subline_label.setter("text_size"))
 
+        content_area.add_widget(running_label)
+        content_area.add_widget(self._headline_button)
+        content_area.add_widget(self._subline_label)
+
         layout.add_widget(top_bar)
-        layout.add_widget(running_label)
-        layout.add_widget(self._headline_button)
-        layout.add_widget(self._subline_label)
+        layout.add_widget(content_area)
         self.add_widget(layout)
 
     def _sync_labels(self):
@@ -152,13 +162,14 @@ class AdminScreen(Screen):
         self.set_fullscreen_status(Window.fullscreen)
 
     def build_ui(self):
-        layout = BoxLayout(
-            orientation="vertical",
-            padding=dp(20),
-            spacing=dp(12),
-        )
+        layout = BoxLayout(orientation="vertical")
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        top_bar = BoxLayout(
+            size_hint_y=None,
+            height=dp(56),
+            spacing=dp(8),
+            padding=(dp(12), dp(8)),
+        )
         back_button = Button(text="Til ticker")
         back_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
         top_bar.add_widget(back_button)
@@ -196,6 +207,13 @@ class AdminScreen(Screen):
 
         layout.add_widget(top_bar)
 
+        content_area = BoxLayout(
+            orientation="vertical",
+            size_hint_y=1,
+            padding=dp(12),
+            spacing=dp(8),
+        )
+
         self._status_label = Label(
             text="",
             font_size="14sp",
@@ -205,20 +223,24 @@ class AdminScreen(Screen):
             valign="middle",
         )
         self._status_label.bind(size=self._status_label.setter("text_size"))
-        layout.add_widget(self._status_label)
+        content_area.add_widget(self._status_label)
 
+        self._tab_scrolls = {}
         self._content_manager = ScreenManager()
         self._content_manager.add_widget(self._build_sources_tab())
         self._content_manager.add_widget(self._build_categories_tab())
         self._content_manager.add_widget(self._build_settings_tab())
-        layout.add_widget(self._content_manager)
+        content_area.add_widget(self._content_manager)
+
+        layout.add_widget(content_area)
 
         self.add_widget(layout)
         self._switch_tab("sources")
 
     def _build_sources_tab(self):
         screen = Screen(name="sources")
-        scroll = ScrollView(do_scroll_x=False)
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(12), size_hint=(1, 1))
+        self._tab_scrolls["sources"] = scroll
         content = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
@@ -305,7 +327,8 @@ class AdminScreen(Screen):
 
     def _build_categories_tab(self):
         screen = Screen(name="categories")
-        scroll = ScrollView(do_scroll_x=False)
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(12), size_hint=(1, 1))
+        self._tab_scrolls["categories"] = scroll
         content = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
@@ -399,7 +422,8 @@ class AdminScreen(Screen):
 
     def _build_settings_tab(self):
         screen = Screen(name="settings")
-        scroll = ScrollView(do_scroll_x=False)
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(12), size_hint=(1, 1))
+        self._tab_scrolls["settings"] = scroll
         content = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
@@ -510,6 +534,9 @@ class AdminScreen(Screen):
     def _switch_tab(self, tab_name):
         if hasattr(self, "_content_manager"):
             self._content_manager.current = tab_name
+        tab_scroll = getattr(self, "_tab_scrolls", {}).get(tab_name)
+        if tab_scroll is not None:
+            tab_scroll.scroll_y = 1
         if tab_name in self._tab_buttons:
             self._tab_buttons[tab_name].state = "down"
 
@@ -1021,8 +1048,35 @@ class NIEApp(App):
         self.sm.current = "admin" if self.sm.current == "ticker" else "ticker"
 
     def toggle_fullscreen(self):
-        Window.fullscreen = not Window.fullscreen
+        if Window.fullscreen:
+            Window.fullscreen = False
+            self._apply_safe_windowed_size()
+        else:
+            Window.fullscreen = True
         self.update_fullscreen_status()
+
+    def _apply_safe_windowed_size(self):
+        safe_width, safe_height = self._get_safe_window_size()
+        Window.size = (safe_width, safe_height)
+        system_size = getattr(Window, "system_size", None)
+        if system_size and system_size[0] and system_size[1]:
+            left = max(0, int((system_size[0] - safe_width) / 2))
+            top = max(0, int((system_size[1] - safe_height) / 2))
+            Window.left = left
+            Window.top = top
+
+    def _get_safe_window_size(self):
+        fallback_width = 800
+        fallback_height = 430
+        system_size = getattr(Window, "system_size", None)
+        if system_size and system_size[0] and system_size[1]:
+            system_width = int(system_size[0])
+            system_height = int(system_size[1])
+            height_limit = max(300, system_height - 60)
+            safe_width = min(fallback_width, system_width)
+            safe_height = min(fallback_height, height_limit)
+            return safe_width, safe_height
+        return fallback_width, fallback_height
 
     def update_fullscreen_status(self):
         is_fullscreen = bool(Window.fullscreen)
