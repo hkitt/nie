@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "nie.db"
+DB_PATH = Path.home() / ".local" / "share" / "nie" / "nie.db"
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
