@@ -8,6 +8,11 @@ from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.core.window import Window
 from kivy.uix.label import Label
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.button import Button
+from kivy.metrics import dp
 
 from db import init_db, connect, list_sources, get_setting
 from rss import fetch_feed
@@ -20,6 +25,78 @@ class TickerScreen(Screen):
     subline = StringProperty("")
     current_link = StringProperty("")
     running = BooleanProperty(True)
+    _ui_built = False
+
+    def on_pre_enter(self, *_args):
+        if not self._ui_built:
+            self.build_ui()
+            self._ui_built = True
+        self._sync_labels()
+
+    def build_ui(self):
+        layout = BoxLayout(
+            orientation="vertical",
+            padding=dp(20),
+            spacing=dp(12),
+        )
+
+        top_bar = BoxLayout(size_hint_y=None, height=dp(48))
+        admin_button = Button(text="Admin")
+        admin_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
+        open_button = Button(text="Åpne")
+        open_button.bind(on_release=lambda *_: App.get_running_app().open_current())
+        exit_button = Button(text="X")
+        exit_button.bind(
+            on_release=lambda *_: setattr(Window, "fullscreen", False)
+        )
+        for btn in (admin_button, open_button, exit_button):
+            top_bar.add_widget(btn)
+
+        running_label = Label(
+            text="NIE running",
+            font_size="18sp",
+            bold=True,
+            size_hint_y=None,
+            height=dp(24),
+            halign="left",
+            valign="middle",
+        )
+        running_label.bind(size=running_label.setter("text_size"))
+
+        self._headline_label = Label(
+            text=self.headline,
+            font_size="28sp",
+            bold=True,
+            halign="left",
+            valign="middle",
+        )
+        self._headline_label.bind(size=self._headline_label.setter("text_size"))
+
+        self._subline_label = Label(
+            text=self.subline,
+            font_size="16sp",
+            halign="left",
+            valign="top",
+        )
+        self._subline_label.bind(size=self._subline_label.setter("text_size"))
+
+        layout.add_widget(top_bar)
+        layout.add_widget(running_label)
+        layout.add_widget(self._headline_label)
+        layout.add_widget(self._subline_label)
+        self.add_widget(layout)
+
+    def _sync_labels(self):
+        if hasattr(self, "_headline_label"):
+            self._headline_label.text = self.headline
+        if hasattr(self, "_subline_label"):
+            self._subline_label.text = self.subline
+
+    def on_headline(self, *_args):
+        self._sync_labels()
+
+    def on_subline(self, *_args):
+        self._sync_labels()
 
 
 class AdminScreen(Screen):
@@ -36,12 +113,102 @@ class AdminScreen(Screen):
         self.refresh()
 
     def build_ui(self):
-        grid = self.ids.sources_grid
-        grid.clear_widgets()
+        layout = BoxLayout(
+            orientation="vertical",
+            padding=dp(20),
+            spacing=dp(12),
+        )
+
+        top_bar = BoxLayout(size_hint_y=None, height=dp(48))
+        back_button = Button(text="Til ticker")
+        back_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
+        top_bar.add_widget(back_button)
+        layout.add_widget(top_bar)
+
+        settings_box = BoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(90),
+        )
+        settings_title = Label(
+            text="Innstillinger",
+            font_size="18sp",
+            bold=True,
+            size_hint_y=None,
+            height=dp(24),
+            text_size=(0, None),
+            halign="left",
+            valign="middle",
+        )
+        settings_title.bind(size=settings_title.setter("text_size"))
+
+        self._fetch_label = Label(
+            text="Hentefrekvens (sek): ",
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(22),
+            halign="left",
+            valign="middle",
+        )
+        self._fetch_label.bind(size=self._fetch_label.setter("text_size"))
+
+        self._ticker_label = Label(
+            text="Ticker-intervall (sek): ",
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(22),
+            halign="left",
+            valign="middle",
+        )
+        self._ticker_label.bind(size=self._ticker_label.setter("text_size"))
+
+        self._min_score_label = Label(
+            text="Min score: ",
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(22),
+            halign="left",
+            valign="middle",
+        )
+        self._min_score_label.bind(size=self._min_score_label.setter("text_size"))
+
+        settings_box.add_widget(settings_title)
+        settings_box.add_widget(self._fetch_label)
+        settings_box.add_widget(self._ticker_label)
+        settings_box.add_widget(self._min_score_label)
+        layout.add_widget(settings_box)
+
+        sources_title = Label(
+            text="Kilder",
+            font_size="18sp",
+            bold=True,
+            size_hint_y=None,
+            height=dp(24),
+            halign="left",
+            valign="middle",
+        )
+        sources_title.bind(size=sources_title.setter("text_size"))
+        layout.add_widget(sources_title)
+
+        scroll = ScrollView(do_scroll_x=False)
+        self.sources_grid = GridLayout(
+            cols=4,
+            size_hint_y=None,
+            row_default_height=dp(32),
+            row_force_default=True,
+            spacing=dp(6),
+        )
+        self.sources_grid.bind(
+            minimum_height=self.sources_grid.setter("height")
+        )
+        scroll.add_widget(self.sources_grid)
+        layout.add_widget(scroll)
+        self.add_widget(layout)
+
         self._header_widgets = []
         header = ("Enabled", "Weight", "Name", "URL")
         for text in header:
-            label = self._add_cell(grid, text, bold=True)
+            label = self._add_cell(self.sources_grid, text, bold=True)
             self._header_widgets.append(label)
 
     def refresh(self):
@@ -56,7 +223,20 @@ class AdminScreen(Screen):
             get_setting("min_score", defaults.min_score)
         )
 
-        grid = self.ids.sources_grid
+        if hasattr(self, "_fetch_label"):
+            self._fetch_label.text = (
+                "Hentefrekvens (sek): " + self.fetch_interval_display
+            )
+        if hasattr(self, "_ticker_label"):
+            self._ticker_label.text = (
+                "Ticker-intervall (sek): " + self.ticker_interval_display
+            )
+        if hasattr(self, "_min_score_label"):
+            self._min_score_label.text = (
+                "Min score: " + self.min_score_display
+            )
+
+        grid = self.sources_grid
         header_widgets = getattr(self, "_header_widgets", [])
         for widget in list(grid.children):
             if widget not in header_widgets:
@@ -76,7 +256,7 @@ class AdminScreen(Screen):
             halign="left",
             valign="middle",
             size_hint_y=None,
-            height="32dp",
+            height=dp(32),
             bold=bold,
         )
         label.bind(size=label.setter("text_size"))
