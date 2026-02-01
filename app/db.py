@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS articles (
   created_ts INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_score ON articles(score DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_ts DESC);
 """
@@ -76,5 +81,59 @@ def init_db():
             DEFAULTS["categories"]
         )
 
+    con.commit()
+    con.close()
+
+def list_sources():
+    con = connect()
+    cur = con.execute(
+        "SELECT id,name,url,weight,enabled FROM sources ORDER BY name ASC"
+    )
+    rows = cur.fetchall()
+    con.close()
+    return rows
+
+def add_source(name, url, weight):
+    con = connect()
+    cur = con.execute(
+        "INSERT INTO sources(name,url,weight,enabled) VALUES(?,?,?,1)",
+        (name, url, weight)
+    )
+    con.commit()
+    source_id = cur.lastrowid
+    con.close()
+    return source_id
+
+def update_source(id, enabled, weight):
+    con = connect()
+    con.execute(
+        "UPDATE sources SET enabled=?, weight=? WHERE id=?",
+        (enabled, weight, id)
+    )
+    con.commit()
+    con.close()
+
+def delete_source(id):
+    con = connect()
+    con.execute("DELETE FROM sources WHERE id=?", (id,))
+    con.commit()
+    con.close()
+
+def get_setting(key, default=None):
+    con = connect()
+    cur = con.execute("SELECT value FROM settings WHERE key=?", (key,))
+    row = cur.fetchone()
+    con.close()
+    if row is None:
+        return default
+    return row["value"]
+
+def set_setting(key, value):
+    con = connect()
+    con.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value)
+    )
     con.commit()
     con.close()
