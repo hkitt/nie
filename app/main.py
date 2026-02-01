@@ -27,9 +27,12 @@ class AdminScreen(Screen):
     fetch_interval_display = StringProperty("")
     ticker_interval_display = StringProperty("")
     min_score_display = StringProperty("")
+    _ui_built = False
 
     def on_pre_enter(self, *_args):
-        self.build_ui()
+        if not self._ui_built:
+            self.build_ui()
+            self._ui_built = True
         self.refresh()
 
     def build_ui(self):
