@@ -29,7 +29,17 @@ class AdminScreen(Screen):
     min_score_display = StringProperty("")
 
     def on_pre_enter(self, *_args):
+        self.build_ui()
         self.refresh()
+
+    def build_ui(self):
+        grid = self.ids.sources_grid
+        grid.clear_widgets()
+        self._header_widgets = []
+        header = ("Enabled", "Weight", "Name", "URL")
+        for text in header:
+            label = self._add_cell(grid, text, bold=True)
+            self._header_widgets.append(label)
 
     def refresh(self):
         defaults = EngineConfig()
@@ -44,10 +54,10 @@ class AdminScreen(Screen):
         )
 
         grid = self.ids.sources_grid
-        grid.clear_widgets()
-        header = ("Enabled", "Weight", "Name", "URL")
-        for text in header:
-            self._add_cell(grid, text, bold=True)
+        header_widgets = getattr(self, "_header_widgets", [])
+        for widget in list(grid.children):
+            if widget not in header_widgets:
+                grid.remove_widget(widget)
 
         for source in list_sources():
             enabled = "Ja" if source["enabled"] else "Nei"
@@ -68,6 +78,7 @@ class AdminScreen(Screen):
         )
         label.bind(size=label.setter("text_size"))
         grid.add_widget(label)
+        return label
 
     def _truncate_url(self, url, max_len=48):
         if len(url) <= max_len:
