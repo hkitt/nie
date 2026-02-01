@@ -7,8 +7,9 @@ from kivy.clock import Clock
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.core.window import Window
+from kivy.uix.label import Label
 
-from db import init_db, connect
+from db import init_db, connect, list_sources, get_setting
 from rss import fetch_feed
 from ranker import score_article, recency_boost
 from settings import EngineConfig
@@ -23,6 +24,55 @@ class TickerScreen(Screen):
 
 class AdminScreen(Screen):
     status = StringProperty("")
+    fetch_interval_display = StringProperty("")
+    ticker_interval_display = StringProperty("")
+    min_score_display = StringProperty("")
+
+    def on_pre_enter(self, *_args):
+        self.refresh()
+
+    def refresh(self):
+        defaults = EngineConfig()
+        self.fetch_interval_display = str(
+            get_setting("fetch_interval_sec", defaults.fetch_interval_sec)
+        )
+        self.ticker_interval_display = str(
+            get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
+        )
+        self.min_score_display = str(
+            get_setting("min_score", defaults.min_score)
+        )
+
+        grid = self.ids.sources_grid
+        grid.clear_widgets()
+        header = ("Enabled", "Weight", "Name", "URL")
+        for text in header:
+            self._add_cell(grid, text, bold=True)
+
+        for source in list_sources():
+            enabled = "Ja" if source["enabled"] else "Nei"
+            weight = f'{source["weight"]:.1f}'
+            name = source["name"]
+            url = self._truncate_url(source["url"])
+            for value in (enabled, weight, name, url):
+                self._add_cell(grid, value)
+
+    def _add_cell(self, grid, text, bold=False):
+        label = Label(
+            text=text,
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height="32dp",
+            bold=bold,
+        )
+        label.bind(size=label.setter("text_size"))
+        grid.add_widget(label)
+
+    def _truncate_url(self, url, max_len=48):
+        if len(url) <= max_len:
+            return url
+        return f"{url[:max_len - 1]}…"
 
 
 class NIEApp(App):

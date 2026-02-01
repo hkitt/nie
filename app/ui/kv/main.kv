@@ -43,9 +43,59 @@
             Button:
                 text: "Til ticker"
                 on_release: app.toggle_admin()
+        BoxLayout:
+            orientation: "vertical"
+            size_hint_y: None
+            height: "90dp"
+            Label:
+                text: "Innstillinger"
+                font_size: "18sp"
+                bold: True
+                size_hint_y: None
+                height: "24dp"
+                text_size: self.size
+                halign: "left"
+                valign: "middle"
+            Label:
+                text: "Hentefrekvens (sek): " + root.fetch_interval_display
+                font_size: "16sp"
+                size_hint_y: None
+                height: "22dp"
+                text_size: self.size
+                halign: "left"
+                valign: "middle"
+            Label:
+                text: "Ticker-intervall (sek): " + root.ticker_interval_display
+                font_size: "16sp"
+                size_hint_y: None
+                height: "22dp"
+                text_size: self.size
+                halign: "left"
+                valign: "middle"
+            Label:
+                text: "Min score: " + root.min_score_display
+                font_size: "16sp"
+                size_hint_y: None
+                height: "22dp"
+                text_size: self.size
+                halign: "left"
+                valign: "middle"
         Label:
-            text: "Admin (MVP): neste steg er CRUD for kilder/kategorier + intervaller"
+            text: "Kilder"
             font_size: "18sp"
+            bold: True
+            size_hint_y: None
+            height: "24dp"
             text_size: self.size
             halign: "left"
-            valign: "top"
+            valign: "middle"
+        ScrollView:
+            do_scroll_x: False
+            GridLayout:
+                id: sources_grid
+                cols: 4
+                size_hint_y: None
+                height: self.minimum_height
+                row_default_height: "32dp"
+                row_force_default: True
+                spacing: "6dp"
