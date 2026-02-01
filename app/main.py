@@ -4,7 +4,7 @@ import webbrowser
 
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import StringProperty, BooleanProperty
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.core.window import Window
 from kivy.uix.label import Label
@@ -12,9 +12,20 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.switch import Switch
 from kivy.metrics import dp
 
-from db import init_db, connect, list_sources, get_setting
+from db import (
+    init_db,
+    connect,
+    list_sources,
+    get_setting,
+    set_setting,
+    add_source,
+    update_source,
+    delete_source,
+)
 from rss import fetch_feed
 from ranker import score_article, recency_boost
 from settings import EngineConfig
@@ -101,9 +112,6 @@ class TickerScreen(Screen):
 
 class AdminScreen(Screen):
     status = StringProperty("")
-    fetch_interval_display = StringProperty("")
-    ticker_interval_display = StringProperty("")
-    min_score_display = StringProperty("")
     _ui_built = False
 
     def on_pre_enter(self, *_args):
@@ -128,7 +136,8 @@ class AdminScreen(Screen):
         settings_box = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
-            height=dp(90),
+            height=dp(160),
+            spacing=dp(8),
         )
         settings_title = Label(
             text="Innstillinger",
@@ -142,41 +151,100 @@ class AdminScreen(Screen):
         )
         settings_title.bind(size=settings_title.setter("text_size"))
 
-        self._fetch_label = Label(
-            text="Hentefrekvens (sek): ",
-            font_size="16sp",
+        settings_grid = GridLayout(
+            cols=2,
+            row_default_height=dp(34),
+            row_force_default=True,
+            spacing=dp(6),
             size_hint_y=None,
-            height=dp(22),
-            halign="left",
-            valign="middle",
+            height=dp(110),
         )
-        self._fetch_label.bind(size=self._fetch_label.setter("text_size"))
 
-        self._ticker_label = Label(
-            text="Ticker-intervall (sek): ",
-            font_size="16sp",
-            size_hint_y=None,
-            height=dp(22),
-            halign="left",
-            valign="middle",
-        )
-        self._ticker_label.bind(size=self._ticker_label.setter("text_size"))
+        settings_grid.add_widget(self._settings_label("Hentefrekvens (sek)"))
+        self._fetch_input = self._settings_input()
+        settings_grid.add_widget(self._fetch_input)
 
-        self._min_score_label = Label(
-            text="Min score: ",
-            font_size="16sp",
+        settings_grid.add_widget(self._settings_label("Ticker-intervall (sek)"))
+        self._ticker_input = self._settings_input()
+        settings_grid.add_widget(self._ticker_input)
+
+        settings_grid.add_widget(self._settings_label("Min score"))
+        self._min_score_input = self._settings_input()
+        settings_grid.add_widget(self._min_score_input)
+
+        settings_actions = BoxLayout(
             size_hint_y=None,
-            height=dp(22),
-            halign="left",
-            valign="middle",
+            height=dp(36),
+            spacing=dp(8),
         )
-        self._min_score_label.bind(size=self._min_score_label.setter("text_size"))
+        settings_save = Button(text="Lagre innstillinger")
+        settings_save.bind(on_release=lambda *_: self._save_settings())
+        settings_actions.add_widget(settings_save)
 
         settings_box.add_widget(settings_title)
-        settings_box.add_widget(self._fetch_label)
-        settings_box.add_widget(self._ticker_label)
-        settings_box.add_widget(self._min_score_label)
+        settings_box.add_widget(settings_grid)
+        settings_box.add_widget(settings_actions)
         layout.add_widget(settings_box)
+
+        self._status_label = Label(
+            text="",
+            font_size="14sp",
+            size_hint_y=None,
+            height=dp(20),
+            halign="left",
+            valign="middle",
+        )
+        self._status_label.bind(size=self._status_label.setter("text_size"))
+        layout.add_widget(self._status_label)
+
+        add_box = BoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(150),
+            spacing=dp(8),
+        )
+        add_title = Label(
+            text="Legg til kilde",
+            font_size="18sp",
+            bold=True,
+            size_hint_y=None,
+            height=dp(24),
+            halign="left",
+            valign="middle",
+        )
+        add_title.bind(size=add_title.setter("text_size"))
+
+        add_grid = GridLayout(
+            cols=2,
+            row_default_height=dp(34),
+            row_force_default=True,
+            spacing=dp(6),
+            size_hint_y=None,
+            height=dp(110),
+        )
+        add_grid.add_widget(self._settings_label("Navn"))
+        self._new_name_input = self._settings_input()
+        add_grid.add_widget(self._new_name_input)
+        add_grid.add_widget(self._settings_label("URL"))
+        self._new_url_input = self._settings_input()
+        add_grid.add_widget(self._new_url_input)
+        add_grid.add_widget(self._settings_label("Weight"))
+        self._new_weight_input = self._settings_input()
+        add_grid.add_widget(self._new_weight_input)
+
+        add_actions = BoxLayout(
+            size_hint_y=None,
+            height=dp(36),
+            spacing=dp(8),
+        )
+        add_button = Button(text="Legg til kilde")
+        add_button.bind(on_release=lambda *_: self._add_source())
+        add_actions.add_widget(add_button)
+
+        add_box.add_widget(add_title)
+        add_box.add_widget(add_grid)
+        add_box.add_widget(add_actions)
+        layout.add_widget(add_box)
 
         sources_title = Label(
             text="Kilder",
@@ -192,9 +260,9 @@ class AdminScreen(Screen):
 
         scroll = ScrollView(do_scroll_x=False)
         self.sources_grid = GridLayout(
-            cols=4,
+            cols=5,
             size_hint_y=None,
-            row_default_height=dp(32),
+            row_default_height=dp(36),
             row_force_default=True,
             spacing=dp(6),
         )
@@ -206,34 +274,24 @@ class AdminScreen(Screen):
         self.add_widget(layout)
 
         self._header_widgets = []
-        header = ("Enabled", "Weight", "Name", "URL")
+        header = ("Enabled", "Weight", "Name", "URL", "Handling")
         for text in header:
             label = self._add_cell(self.sources_grid, text, bold=True)
             self._header_widgets.append(label)
 
     def refresh(self):
         defaults = EngineConfig()
-        self.fetch_interval_display = str(
-            get_setting("fetch_interval_sec", defaults.fetch_interval_sec)
-        )
-        self.ticker_interval_display = str(
-            get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
-        )
-        self.min_score_display = str(
-            get_setting("min_score", defaults.min_score)
-        )
-
-        if hasattr(self, "_fetch_label"):
-            self._fetch_label.text = (
-                "Hentefrekvens (sek): " + self.fetch_interval_display
+        if hasattr(self, "_fetch_input"):
+            self._fetch_input.text = str(
+                get_setting("fetch_interval_sec", defaults.fetch_interval_sec)
             )
-        if hasattr(self, "_ticker_label"):
-            self._ticker_label.text = (
-                "Ticker-intervall (sek): " + self.ticker_interval_display
+        if hasattr(self, "_ticker_input"):
+            self._ticker_input.text = str(
+                get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
             )
-        if hasattr(self, "_min_score_label"):
-            self._min_score_label.text = (
-                "Min score: " + self.min_score_display
+        if hasattr(self, "_min_score_input"):
+            self._min_score_input.text = str(
+                get_setting("min_score", defaults.min_score)
             )
 
         grid = self.sources_grid
@@ -243,12 +301,7 @@ class AdminScreen(Screen):
                 grid.remove_widget(widget)
 
         for source in list_sources():
-            enabled = "Ja" if source["enabled"] else "Nei"
-            weight = f'{source["weight"]:.1f}'
-            name = source["name"]
-            url = self._truncate_url(source["url"])
-            for value in (enabled, weight, name, url):
-                self._add_cell(grid, value)
+            self._add_source_row(source)
 
     def _add_cell(self, grid, text, bold=False):
         label = Label(
@@ -256,7 +309,7 @@ class AdminScreen(Screen):
             halign="left",
             valign="middle",
             size_hint_y=None,
-            height=dp(32),
+            height=dp(36),
             bold=bold,
         )
         label.bind(size=label.setter("text_size"))
@@ -268,11 +321,139 @@ class AdminScreen(Screen):
             return url
         return f"{url[:max_len - 1]}…"
 
+    def _settings_label(self, text):
+        label = Label(
+            text=text,
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(34),
+            halign="left",
+            valign="middle",
+        )
+        label.bind(size=label.setter("text_size"))
+        return label
+
+    def _settings_input(self):
+        return TextInput(
+            multiline=False,
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(34),
+        )
+
+    def _set_status(self, message):
+        self.status = message
+        if hasattr(self, "_status_label"):
+            self._status_label.text = message
+
+    def _save_settings(self):
+        try:
+            fetch_interval = int(self._fetch_input.text.strip())
+            ticker_interval = int(self._ticker_input.text.strip())
+            min_score = float(self._min_score_input.text.strip())
+        except ValueError:
+            self._set_status("Ugyldig format i innstillinger.")
+            return
+
+        if fetch_interval <= 0 or ticker_interval <= 0:
+            self._set_status("Intervaller må være større enn 0.")
+            return
+
+        set_setting("fetch_interval_sec", fetch_interval)
+        set_setting("ticker_interval_sec", ticker_interval)
+        set_setting("min_score", min_score)
+        app = App.get_running_app()
+        if app:
+            app.apply_settings(fetch_interval, ticker_interval, min_score)
+        self._set_status("Innstillinger lagret.")
+
+    def _add_source(self):
+        name = self._new_name_input.text.strip()
+        url = self._new_url_input.text.strip()
+        weight_text = self._new_weight_input.text.strip()
+        if not name or not url:
+            self._set_status("Navn og URL må fylles ut.")
+            return
+        try:
+            weight = float(weight_text)
+        except ValueError:
+            self._set_status("Weight må være et tall.")
+            return
+        try:
+            add_source(name, url, weight)
+        except Exception:
+            self._set_status("Kunne ikke legge til kilde (sjekk URL).")
+            return
+        self._new_name_input.text = ""
+        self._new_url_input.text = ""
+        self._new_weight_input.text = ""
+        self._set_status("Kilde lagt til.")
+        self.refresh()
+
+    def _add_source_row(self, source):
+        enabled_switch = Switch(active=bool(source["enabled"]))
+        weight_input = TextInput(
+            text=f'{source["weight"]:.1f}',
+            multiline=False,
+            font_size="16sp",
+            size_hint_y=None,
+            height=dp(34),
+        )
+        name_label = Label(
+            text=source["name"],
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(36),
+        )
+        name_label.bind(size=name_label.setter("text_size"))
+        url_label = Label(
+            text=self._truncate_url(source["url"]),
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(36),
+        )
+        url_label.bind(size=url_label.setter("text_size"))
+
+        def apply_update(*_args):
+            try:
+                weight = float(weight_input.text.strip())
+            except ValueError:
+                self._set_status("Weight må være et tall.")
+                return
+            update_source(source["id"], int(enabled_switch.active), weight)
+            self._set_status("Kilde oppdatert.")
+
+        enabled_switch.bind(on_active=lambda *_: apply_update())
+
+        actions = BoxLayout(spacing=dp(6))
+        save_button = Button(text="Lagre", size_hint_x=None, width=dp(70))
+        save_button.bind(on_release=lambda *_: apply_update())
+        delete_button = Button(text="Slett", size_hint_x=None, width=dp(70))
+        delete_button.bind(
+            on_release=lambda *_: self._delete_source(source["id"])
+        )
+        actions.add_widget(save_button)
+        actions.add_widget(delete_button)
+
+        self.sources_grid.add_widget(enabled_switch)
+        self.sources_grid.add_widget(weight_input)
+        self.sources_grid.add_widget(name_label)
+        self.sources_grid.add_widget(url_label)
+        self.sources_grid.add_widget(actions)
+
+    def _delete_source(self, source_id):
+        delete_source(source_id)
+        self._set_status("Kilde slettet.")
+        self.refresh()
+
 
 class NIEApp(App):
     def build(self):
         init_db()
         self.cfg = EngineConfig()
+        self._load_settings_from_db()
 
         self.sm = ScreenManager()
         self.ticker = TickerScreen(name="ticker")
@@ -292,7 +473,10 @@ class NIEApp(App):
         threading.Thread(target=self.engine_loop, daemon=True).start()
 
         # Start ticker rotation on UI thread
-        Clock.schedule_interval(self.rotate_ticker, self.cfg.ticker_interval_sec)
+        self._ticker_event = Clock.schedule_interval(
+            self.rotate_ticker,
+            self.cfg.ticker_interval_sec,
+        )
 
         return self.sm
 
@@ -318,6 +502,30 @@ class NIEApp(App):
 
     def toggle_admin(self):
         self.sm.current = "admin" if self.sm.current == "ticker" else "ticker"
+
+    def apply_settings(self, fetch_interval, ticker_interval, min_score):
+        self.cfg.fetch_interval_sec = fetch_interval
+        self.cfg.ticker_interval_sec = ticker_interval
+        self.cfg.min_score = min_score
+        if getattr(self, "_ticker_event", None) is not None:
+            self._ticker_event.cancel()
+        self._ticker_event = Clock.schedule_interval(
+            self.rotate_ticker,
+            self.cfg.ticker_interval_sec,
+        )
+
+    def _load_settings_from_db(self):
+        defaults = EngineConfig()
+        fetch_interval = int(
+            get_setting("fetch_interval_sec", defaults.fetch_interval_sec)
+        )
+        ticker_interval = int(
+            get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
+        )
+        min_score = float(get_setting("min_score", defaults.min_score))
+        self.cfg.fetch_interval_sec = fetch_interval
+        self.cfg.ticker_interval_sec = ticker_interval
+        self.cfg.min_score = min_score
 
     def engine_loop(self):
         while True:
