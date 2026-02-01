@@ -1,0 +1,51 @@
+<TickerScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "12dp"
+
+        BoxLayout:
+            size_hint_y: None
+            height: "48dp"
+            Button:
+                text: "Admin"
+                on_release: app.toggle_admin()
+            Button:
+                text: "\u00c5pne"
+                on_release: app.open_current()
+            Button:
+                text: "X"
+                on_release: setattr(__import__('kivy.core.window').core.window.Window, 'fullscreen', False)
+
+        Label:
+            text: root.headline
+            font_size: "28sp"
+            bold: True
+            halign: "left"
+            valign: "middle"
+            text_size: self.size
+
+        Label:
+            text: root.subline
+            font_size: "16sp"
+            halign: "left"
+            valign: "top"
+            text_size: self.size
+
+<AdminScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "12dp"
+        BoxLayout:
+            size_hint_y: None
+            height: "48dp"
+            Button:
+                text: "Til ticker"
+                on_release: app.toggle_admin()
+        Label:
+            text: "Admin (MVP): neste steg er CRUD for kilder/kategorier + intervaller"
+            font_size: "18sp"
+            text_size: self.size
+            halign: "left"
+            valign: "top"
