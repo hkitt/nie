@@ -30,8 +30,16 @@ CREATE TABLE IF NOT EXISTS articles (
   source_name TEXT,
   published_ts INTEGER,              -- unix seconds
   summary TEXT,
+  image_url TEXT,
   score REAL NOT NULL DEFAULT 0,
   created_ts INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS article_cache (
+  url TEXT PRIMARY KEY,
+  text TEXT,
+  image_url TEXT,
+  fetched_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -67,6 +75,7 @@ def connect():
 def init_db():
     con = connect()
     con.executescript(SCHEMA)
+    _ensure_column(con, "articles", "image_url", "image_url TEXT")
 
     cur = con.execute("SELECT COUNT(*) AS c FROM sources")
     if cur.fetchone()["c"] == 0:
@@ -84,6 +93,12 @@ def init_db():
 
     con.commit()
     con.close()
+
+
+def _ensure_column(con, table, column, definition):
+    columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def list_sources():
@@ -190,6 +205,39 @@ def set_setting(key, value):
         "INSERT INTO settings(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value)
+    )
+    con.commit()
+    con.close()
+
+
+def get_cached_article(url, max_age_hours=24):
+    con = connect()
+    row = con.execute(
+        "SELECT text, image_url, fetched_at FROM article_cache WHERE url=?",
+        (url,),
+    ).fetchone()
+    con.close()
+    if not row:
+        return None
+    if row["fetched_at"]:
+        from datetime import datetime, timezone, timedelta
+
+        fetched_at = datetime.fromisoformat(row["fetched_at"])
+        if datetime.now(timezone.utc) - fetched_at > timedelta(hours=max_age_hours):
+            return None
+    return {"text": row["text"] or "", "image_url": row["image_url"]}
+
+
+def set_cached_article(url, text, image_url):
+    from datetime import datetime, timezone
+
+    con = connect()
+    con.execute(
+        "INSERT INTO article_cache(url, text, image_url, fetched_at) "
+        "VALUES(?,?,?,?) "
+        "ON CONFLICT(url) DO UPDATE SET "
+        "text=excluded.text, image_url=excluded.image_url, fetched_at=excluded.fetched_at",
+        (url, text, image_url, datetime.now(timezone.utc).isoformat()),
     )
     con.commit()
     con.close()
