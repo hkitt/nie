@@ -3,6 +3,7 @@ from kivy.config import Config
 Config.set("graphics", "fullscreen", "auto")
 Config.set("graphics", "borderless", "1")
 
+import logging
 import os
 import sys
 import time
@@ -708,8 +709,36 @@ class AdminScreen(Screen):
 
     def trigger_update(self):
         app = App.get_running_app()
-        if app:
-            app.update_and_restart(self._set_status)
+        if not app:
+            return
+
+        def set_status(message):
+            def apply_status(*_args):
+                self.status = message
+                if hasattr(self, "_status_label"):
+                    self._status_label.text = message
+
+            Clock.schedule_once(apply_status, 0)
+
+        def worker():
+            try:
+                inserted, failed_sources, total_sources = app.fetch_and_rank()
+                if total_sources == 0:
+                    set_status("Oppdatering feilet: ingen kilder")
+                    return
+                if failed_sources == 0:
+                    set_status(f"Oppdatert: {inserted} nye saker")
+                elif failed_sources < total_sources:
+                    set_status(f"Oppdatert med feil: {failed_sources} kilde feilet")
+                else:
+                    set_status("Oppdatering feilet: alle kilder feilet")
+            except Exception as exc:
+                logging.exception("Manual refresh failed")
+                error_message = str(exc).strip() or exc.__class__.__name__
+                set_status(f"Oppdatering feilet: {error_message}")
+
+        set_status("Oppdaterer...")
+        threading.Thread(target=worker, daemon=True).start()
 
     def _save_settings(self):
         try:
@@ -1544,10 +1573,22 @@ class NIEApp(App):
         now = int(time.time())
 
         inserted = 0
+        failed_sources = 0
+        total_sources = len(sources)
         for s in sources:
-            items = fetch_feed(s["url"])
+            try:
+                items = fetch_feed(s["url"])
+            except Exception:
+                failed_sources += 1
+                logging.exception("Feed fetch failed for %s", s["url"])
+                continue
             for it in items:
-                base_score = score_article(it["title"], it["summary"], s["weight"], categories)
+                base_score = score_article(
+                    it["title"],
+                    it["summary"],
+                    s["weight"],
+                    categories,
+                )
                 score = base_score + recency_boost(it["published_ts"])
 
                 try:
@@ -1587,6 +1628,7 @@ class NIEApp(App):
             self._ticker_idx = 0
 
         print(f"Fetched/inserted: {inserted}, ticker items: {len(rows)}")
+        return inserted, failed_sources, total_sources
 
 
 if __name__ == "__main__":
