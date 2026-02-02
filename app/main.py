@@ -471,7 +471,7 @@ class AdminScreen(Screen):
         add_grid = GridLayout(
             cols=2,
             row_default_height=dp(34),
-            row_force_default=True,
+            row_force_default=False,
             spacing=dp(6),
             size_hint_y=None,
         )
@@ -481,7 +481,9 @@ class AdminScreen(Screen):
         self._new_category_name = self._settings_input()
         add_grid.add_widget(self._new_category_name)
 
-        add_grid.add_widget(self._settings_label("Keywords"))
+        keywords_label = self._settings_label("Keywords")
+        keywords_label.height = dp(68)
+        add_grid.add_widget(keywords_label)
         self._new_category_keywords = TextInput(
             multiline=True,
             font_size="16sp",
@@ -1149,8 +1151,12 @@ class NIEApp(App):
         self.sm.add_widget(self.ticker)
         self.sm.add_widget(self.admin)
 
-        self._fullscreen_enabled = True
-        Window.fullscreen = "auto"
+        self._fullscreen_enabled = False
+        Window.fullscreen = False
+        Window.borderless = False
+        if hasattr(Window, "state"):
+            Window.state = "normal"
+        self._apply_safe_windowed_size()
 
         self._articles = []
         self._ticker_idx = 0
@@ -1197,12 +1203,12 @@ class NIEApp(App):
         self.sm.current = "ticker"
 
     def toggle_fullscreen(self):
-        self._fullscreen_enabled = not bool(Window.fullscreen)
+        self._fullscreen_enabled = not self._fullscreen_enabled
         self.set_fullscreen(self._fullscreen_enabled)
 
     def set_fullscreen(self, enabled):
         if enabled:
-            Window.fullscreen = "auto"
+            Window.fullscreen = True
         else:
             Window.fullscreen = False
             Window.borderless = False
