@@ -1,3 +1,8 @@
+from kivy.config import Config
+
+Config.set("graphics", "fullscreen", "auto")
+Config.set("graphics", "borderless", "1")
+
 import os
 import sys
 import time
@@ -6,7 +11,6 @@ import webbrowser
 import sqlite3
 import subprocess
 
-from kivy.config import Config
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.properties import StringProperty, BooleanProperty
@@ -42,9 +46,6 @@ from db import (
 from rss import fetch_feed
 from ranker import score_article, recency_boost
 from settings import EngineConfig
-
-Config.set("graphics", "fullscreen", "auto")
-Config.set("graphics", "borderless", "1")
 
 COLOR_THEME = {
     "background": (0.05, 0.08, 0.12, 1),
