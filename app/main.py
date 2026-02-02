@@ -18,6 +18,7 @@ from kivy.uix.switch import Switch
 from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
 from kivy.metrics import dp
+from kivy.graphics import Color, Rectangle
 
 from db import (
     init_db,
@@ -38,6 +39,24 @@ from rss import fetch_feed
 from ranker import score_article, recency_boost
 from settings import EngineConfig
 
+COLOR_THEME = {
+    "background": (0.05, 0.08, 0.12, 1),
+    "surface": (0.11, 0.16, 0.24, 1),
+    "accent": (0.18, 0.52, 0.85, 1),
+    "text_primary": (1, 1, 1, 1),
+    "text_secondary": (0.85, 0.9, 0.96, 1),
+    "button": (0.2, 0.36, 0.6, 1),
+}
+
+MONO_THEME = {
+    "background": (0, 0, 0, 1),
+    "surface": (0.12, 0.12, 0.12, 1),
+    "accent": (1, 1, 1, 1),
+    "text_primary": (1, 1, 1, 1),
+    "text_secondary": (0.8, 0.8, 0.8, 1),
+    "button": (0.2, 0.2, 0.2, 1),
+}
+
 
 class TickerScreen(Screen):
     headline = StringProperty("Starter NIE…")
@@ -52,9 +71,13 @@ class TickerScreen(Screen):
             self._ui_built = True
         self._sync_labels()
         self.set_fullscreen_status(Window.fullscreen)
+        app = App.get_running_app()
+        if app:
+            self.apply_theme(app.theme)
 
     def build_ui(self):
         layout = BoxLayout(orientation="vertical")
+        self._layout = layout
 
         top_bar = BoxLayout(
             size_hint_y=None,
@@ -63,7 +86,7 @@ class TickerScreen(Screen):
             padding=(dp(12), dp(8)),
         )
         admin_button = Button(text="Admin")
-        admin_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
+        admin_button.bind(on_release=lambda *_: App.get_running_app().show_admin())
         open_button = Button(text="Åpne")
         open_button.bind(on_release=lambda *_: App.get_running_app().open_current())
         fullscreen_button = Button(text="Full")
@@ -79,8 +102,17 @@ class TickerScreen(Screen):
             valign="middle",
         )
         self._fullscreen_label.bind(size=self._fullscreen_label.setter("text_size"))
-        for widget in (admin_button, open_button, fullscreen_button, self._fullscreen_label):
+        self._admin_button = admin_button
+        self._open_button = open_button
+        self._fullscreen_button = fullscreen_button
+        for widget in (
+            admin_button,
+            open_button,
+            fullscreen_button,
+            self._fullscreen_label,
+        ):
             top_bar.add_widget(widget)
+        self._top_bar = top_bar
 
         content_area = BoxLayout(
             orientation="vertical",
@@ -99,6 +131,7 @@ class TickerScreen(Screen):
             valign="middle",
         )
         running_label.bind(size=running_label.setter("text_size"))
+        self._running_label = running_label
 
         self._headline_button = Button(
             text=self.headline,
@@ -131,6 +164,47 @@ class TickerScreen(Screen):
         layout.add_widget(top_bar)
         layout.add_widget(content_area)
         self.add_widget(layout)
+        theme = App.get_running_app().theme if App.get_running_app() else COLOR_THEME
+        self._apply_backgrounds(theme)
+        self.apply_theme(theme)
+
+    def _apply_backgrounds(self, theme):
+        self._layout_bg = self._add_background(self._layout, theme["background"])
+        self._top_bar_bg = self._add_background(self._top_bar, theme["surface"])
+
+    def _add_background(self, widget, color):
+        with widget.canvas.before:
+            color_instruction = Color(*color)
+            rect = Rectangle(pos=widget.pos, size=widget.size)
+
+        def update_rect(*_args):
+            rect.pos = widget.pos
+            rect.size = widget.size
+
+        widget.bind(pos=update_rect, size=update_rect)
+        return color_instruction
+
+    def apply_theme(self, theme):
+        if hasattr(self, "_layout_bg"):
+            self._layout_bg.rgba = theme["background"]
+        if hasattr(self, "_top_bar_bg"):
+            self._top_bar_bg.rgba = theme["surface"]
+        if hasattr(self, "_running_label"):
+            self._running_label.color = theme["text_secondary"]
+        if hasattr(self, "_headline_button"):
+            self._headline_button.color = theme["text_primary"]
+        if hasattr(self, "_subline_label"):
+            self._subline_label.color = theme["text_secondary"]
+        for button in (
+            getattr(self, "_admin_button", None),
+            getattr(self, "_open_button", None),
+            getattr(self, "_fullscreen_button", None),
+        ):
+            if button:
+                button.background_normal = ""
+                button.background_down = ""
+                button.background_color = theme["button"]
+                button.color = theme["text_primary"]
 
     def _sync_labels(self):
         if hasattr(self, "_headline_button"):
@@ -160,9 +234,13 @@ class AdminScreen(Screen):
             self._ui_built = True
         self.refresh()
         self.set_fullscreen_status(Window.fullscreen)
+        app = App.get_running_app()
+        if app:
+            self.apply_theme(app.theme)
 
     def build_ui(self):
         layout = BoxLayout(orientation="vertical")
+        self._layout = layout
 
         top_bar = BoxLayout(
             size_hint_y=None,
@@ -171,8 +249,9 @@ class AdminScreen(Screen):
             padding=(dp(12), dp(8)),
         )
         back_button = Button(text="Til ticker")
-        back_button.bind(on_release=lambda *_: App.get_running_app().toggle_admin())
+        back_button.bind(on_release=lambda *_: App.get_running_app().show_ticker())
         top_bar.add_widget(back_button)
+        self._back_button = back_button
 
         self._tab_buttons = {}
         for tab_name, label in (
@@ -188,6 +267,7 @@ class AdminScreen(Screen):
         refresh_button = Button(text="Refresh", size_hint_x=None, width=dp(100))
         refresh_button.bind(on_release=lambda *_: self.refresh())
         top_bar.add_widget(refresh_button)
+        self._refresh_button = refresh_button
 
         fullscreen_button = Button(text="Full", size_hint_x=None, width=dp(80))
         fullscreen_button.bind(
@@ -204,6 +284,8 @@ class AdminScreen(Screen):
         self._fullscreen_label.bind(size=self._fullscreen_label.setter("text_size"))
         top_bar.add_widget(fullscreen_button)
         top_bar.add_widget(self._fullscreen_label)
+        self._fullscreen_button = fullscreen_button
+        self._top_bar = top_bar
 
         layout.add_widget(top_bar)
 
@@ -213,6 +295,7 @@ class AdminScreen(Screen):
             padding=dp(12),
             spacing=dp(8),
         )
+        self._content_area = content_area
 
         self._status_label = Label(
             text="",
@@ -236,6 +319,43 @@ class AdminScreen(Screen):
 
         self.add_widget(layout)
         self._switch_tab("sources")
+        theme = App.get_running_app().theme if App.get_running_app() else COLOR_THEME
+        self._apply_backgrounds(theme)
+        self.apply_theme(theme)
+
+    def _apply_backgrounds(self, theme):
+        self._layout_bg = self._add_background(self._layout, theme["background"])
+        self._top_bar_bg = self._add_background(self._top_bar, theme["surface"])
+
+    def _add_background(self, widget, color):
+        with widget.canvas.before:
+            color_instruction = Color(*color)
+            rect = Rectangle(pos=widget.pos, size=widget.size)
+
+        def update_rect(*_args):
+            rect.pos = widget.pos
+            rect.size = widget.size
+
+        widget.bind(pos=update_rect, size=update_rect)
+        return color_instruction
+
+    def apply_theme(self, theme):
+        if hasattr(self, "_layout_bg"):
+            self._layout_bg.rgba = theme["background"]
+        if hasattr(self, "_top_bar_bg"):
+            self._top_bar_bg.rgba = theme["surface"]
+        if hasattr(self, "_status_label"):
+            self._status_label.color = theme["text_secondary"]
+        for button in (
+            getattr(self, "_back_button", None),
+            getattr(self, "_refresh_button", None),
+            getattr(self, "_fullscreen_button", None),
+        ):
+            if button:
+                button.background_normal = ""
+                button.background_down = ""
+                button.background_color = theme["button"]
+                button.color = theme["text_primary"]
 
     def _build_sources_tab(self):
         screen = Screen(name="sources")
@@ -465,6 +585,13 @@ class AdminScreen(Screen):
         self._min_score_input = self._settings_input()
         settings_grid.add_widget(self._min_score_input)
 
+        settings_grid.add_widget(self._settings_label("Fargetema"))
+        self._theme_switch = Switch(active=True)
+        self._theme_switch.bind(
+            on_active=lambda instance, value: self._apply_theme_setting(value)
+        )
+        settings_grid.add_widget(self._theme_switch)
+
         content.add_widget(settings_grid)
 
         settings_actions = BoxLayout(
@@ -530,6 +657,9 @@ class AdminScreen(Screen):
             self._min_score_input.text = str(
                 get_setting("min_score", defaults.min_score)
             )
+        if hasattr(self, "_theme_switch"):
+            theme_value = int(get_setting("color_theme", 1))
+            self._theme_switch.active = bool(theme_value)
 
     def _switch_tab(self, tab_name):
         if hasattr(self, "_content_manager"):
@@ -617,10 +747,20 @@ class AdminScreen(Screen):
         set_setting("fetch_interval_sec", fetch_interval)
         set_setting("ticker_interval_sec", ticker_interval)
         set_setting("min_score", min_score)
+        if hasattr(self, "_theme_switch"):
+            set_setting("color_theme", int(self._theme_switch.active))
         app = App.get_running_app()
         if app:
             app.apply_settings(fetch_interval, ticker_interval, min_score)
+            if hasattr(self, "_theme_switch"):
+                app.apply_color_theme(self._theme_switch.active)
         self._set_status("Innstillinger lagret.")
+
+    def _apply_theme_setting(self, use_color):
+        set_setting("color_theme", int(use_color))
+        app = App.get_running_app()
+        if app:
+            app.apply_color_theme(use_color)
 
     def _add_source(self):
         name = self._new_name_input.text.strip()
@@ -1009,7 +1149,8 @@ class NIEApp(App):
         self.sm.add_widget(self.ticker)
         self.sm.add_widget(self.admin)
 
-        Window.fullscreen = True
+        self._fullscreen_enabled = True
+        Window.fullscreen = "auto"
 
         self._articles = []
         self._ticker_idx = 0
@@ -1021,6 +1162,8 @@ class NIEApp(App):
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
         )
+
+        self.apply_color_theme(self.use_color_theme)
 
         return self.sm
 
@@ -1045,14 +1188,34 @@ class NIEApp(App):
             webbrowser.open(link)
 
     def toggle_admin(self):
-        self.sm.current = "admin" if self.sm.current == "ticker" else "ticker"
+        self.sm.current = "admin" if self.sm.current != "admin" else "ticker"
+
+    def show_admin(self):
+        self.sm.current = "admin"
+
+    def show_ticker(self):
+        self.sm.current = "ticker"
 
     def toggle_fullscreen(self):
+        self._fullscreen_enabled = not bool(Window.fullscreen)
+        self.set_fullscreen(self._fullscreen_enabled)
+
+    def set_fullscreen(self, enabled):
+        if enabled:
+            Window.fullscreen = "auto"
+        else:
+            Window.fullscreen = False
+            Window.borderless = False
+            if hasattr(Window, "state"):
+                Window.state = "normal"
+            Clock.schedule_once(lambda *_: self._apply_safe_windowed_size(), 0)
+            Clock.schedule_once(self._ensure_windowed, 0)
+        self.update_fullscreen_status()
+
+    def _ensure_windowed(self, *_args):
         if Window.fullscreen:
             Window.fullscreen = False
-            self._apply_safe_windowed_size()
-        else:
-            Window.fullscreen = True
+        self._apply_safe_windowed_size()
         self.update_fullscreen_status()
 
     def _apply_safe_windowed_size(self):
@@ -1085,6 +1248,14 @@ class NIEApp(App):
         if self.admin:
             self.admin.set_fullscreen_status(is_fullscreen)
 
+    def apply_color_theme(self, use_color):
+        self.use_color_theme = bool(use_color)
+        self.theme = COLOR_THEME if self.use_color_theme else MONO_THEME
+        if self.ticker:
+            self.ticker.apply_theme(self.theme)
+        if self.admin:
+            self.admin.apply_theme(self.theme)
+
     def apply_settings(self, fetch_interval, ticker_interval, min_score):
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
@@ -1105,6 +1276,8 @@ class NIEApp(App):
             get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
         )
         min_score = float(get_setting("min_score", defaults.min_score))
+        self.use_color_theme = bool(int(get_setting("color_theme", 1)))
+        self.theme = COLOR_THEME if self.use_color_theme else MONO_THEME
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
         self.cfg.min_score = min_score
