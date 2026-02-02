@@ -1203,10 +1203,12 @@ class NIEApp(App):
         self.sm.current = "ticker"
 
     def toggle_fullscreen(self):
-        self._fullscreen_enabled = not self._fullscreen_enabled
-        self.set_fullscreen(self._fullscreen_enabled)
+        enabled = not bool(Window.fullscreen)
+        self._fullscreen_enabled = enabled
+        self.set_fullscreen(enabled)
 
     def set_fullscreen(self, enabled):
+        self._fullscreen_enabled = enabled
         if enabled:
             Window.fullscreen = True
         else:
@@ -1249,6 +1251,7 @@ class NIEApp(App):
 
     def update_fullscreen_status(self):
         is_fullscreen = bool(Window.fullscreen)
+        self._fullscreen_enabled = is_fullscreen
         if self.ticker:
             self.ticker.set_fullscreen_status(is_fullscreen)
         if self.admin:
