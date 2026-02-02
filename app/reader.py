@@ -6,8 +6,6 @@ import importlib.util
 import re
 from typing import Optional
 
-import requests
-
 from db import get_cached_article, set_cached_article
 
 
@@ -49,8 +47,12 @@ def fetch_article_content(url: str, rss_summary: str = "", rss_image_url: str | 
     if cached:
         return {"text": cached["text"], "image_url": cached.get("image_url"), "from_cache": True}
 
+    requests_module = _optional_module("requests")
+    if not requests_module:
+        return {"text": rss_summary or "", "image_url": rss_image_url, "used_fallback": True}
+
     try:
-        response = requests.get(
+        response = requests_module.get(
             url,
             headers={"User-Agent": USER_AGENT},
             timeout=10,
