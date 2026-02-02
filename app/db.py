@@ -56,11 +56,22 @@ DEFAULTS = {
     ("Google News - AI", "https://news.google.com/rss/search?q=kunstig%20intelligens%20when:7d&hl=no&gl=NO&ceid=NO:no", 1.2, 1),
     ("E24", "https://e24.no/rss2/", 1.1, 1),
     ("VG Forsiden", "https://www.vg.no/rss/feed/forsiden/", 1.0, 1),
+    ("NRK Toppsaker", "https://www.nrk.no/toppsaker.rss", 1.1, 1),
+    ("Tek.no", "https://www.tek.no/nyheter.rss", 1.0, 1),
+    ("Aftenposten", "https://www.aftenposten.no/rss", 1.0, 1),
+    ("BBC World", "http://feeds.bbci.co.uk/news/world/rss.xml", 0.9, 1),
+    ("Reuters World", "https://feeds.reuters.com/reuters/worldNews", 0.9, 1),
+    ("The Verge", "https://www.theverge.com/rss/index.xml", 0.9, 1),
+    ("Hacker News", "https://hnrss.org/frontpage", 0.8, 1),
+    ("TechCrunch", "https://techcrunch.com/feed/", 0.8, 1),
   ],
   "categories": [
     ("AI", "ai,kunstig intelligens,openai,chatgpt,llm,maskinlæring", 1.4, 1),
     ("Krypto", "bitcoin,btc,ethereum,eth,solana,sol,krypto,stablecoin", 1.2, 1),
     ("Norsk økonomi", "norge,norsk økonomi,rente,norges bank,inflasjon,krone", 1.1, 1),
+    ("Sports", "downhill bike,downhill biking,sykkel,terrengsykkel,mtb,outdoor,friluft,jakt,hunting", 1.5, 1),
+    ("Development", "php,ai coding,coding assistant,programmering,utvikling", 1.0, 1),
+    ("Business development", "business development,project management,prosjektledelse,forretningsutvikling", 1.0, 1),
   ]
 }
 
@@ -90,6 +101,7 @@ def init_db():
             "INSERT INTO categories(name,keywords,weight,enabled) VALUES(?,?,?,?)",
             DEFAULTS["categories"]
         )
+    _ensure_defaults(con)
 
     con.commit()
     con.close()
@@ -99,6 +111,34 @@ def _ensure_column(con, table, column, definition):
     columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def _ensure_defaults(con):
+    existing_sources = {
+        row["url"] for row in con.execute("SELECT url FROM sources")
+    }
+    sources_to_add = [
+        source for source in DEFAULTS["sources"] if source[1] not in existing_sources
+    ]
+    if sources_to_add:
+        con.executemany(
+            "INSERT INTO sources(name,url,weight,enabled) VALUES(?,?,?,?)",
+            sources_to_add,
+        )
+
+    existing_categories = {
+        row["name"] for row in con.execute("SELECT name FROM categories")
+    }
+    categories_to_add = [
+        category
+        for category in DEFAULTS["categories"]
+        if category[0] not in existing_categories
+    ]
+    if categories_to_add:
+        con.executemany(
+            "INSERT INTO categories(name,keywords,weight,enabled) VALUES(?,?,?,?)",
+            categories_to_add,
+        )
 
 
 def list_sources():
