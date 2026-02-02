@@ -832,6 +832,9 @@ class AdminScreen(Screen):
                 self._set_status("Weight må være et tall.")
                 return
             update_source(source["id"], int(enabled_switch.active), weight)
+            app = App.get_running_app()
+            if app:
+                app.reload_ticker_articles()
             self._set_status("Kilde oppdatert.")
 
         enabled_switch.bind(on_active=lambda *_: apply_update())
@@ -915,6 +918,9 @@ class AdminScreen(Screen):
             popup.dismiss()
             self._set_status("Kilde oppdatert.")
             self.refresh_sources()
+            app = App.get_running_app()
+            if app:
+                app.reload_ticker_articles()
 
         save_button = Button(text="Lagre")
         cancel_button = Button(text="Avbryt")
@@ -943,6 +949,9 @@ class AdminScreen(Screen):
             popup.dismiss()
             self._set_status("Kilde slettet.")
             self.refresh_sources()
+            app = App.get_running_app()
+            if app:
+                app.reload_ticker_articles()
 
         delete_button = Button(text="Slett")
         cancel_button = Button(text="Avbryt")
@@ -1558,6 +1567,38 @@ class NIEApp(App):
                 print("Engine error:", e)
             time.sleep(self.cfg.fetch_interval_sec)
 
+    def _load_ticker_articles(self, con):
+        rows = con.execute(
+            """SELECT a.title,
+                      a.link,
+                      a.source_name,
+                      a.score,
+                      a.summary,
+                      a.published_ts,
+                      a.image_url
+               FROM articles a
+               JOIN sources s ON a.source_name = s.name
+               WHERE s.enabled = 1
+                 AND a.score >= ?
+               ORDER BY a.score DESC, a.created_ts DESC
+               LIMIT ?""",
+            (self.cfg.min_score, self.cfg.max_items),
+        ).fetchall()
+
+        with self._lock:
+            self._articles = [dict(r) for r in rows]
+            self._ticker_idx = 0
+
+        return rows
+
+    def reload_ticker_articles(self):
+        con = connect()
+        try:
+            rows = self._load_ticker_articles(con)
+        finally:
+            con.close()
+        return len(rows)
+
     def fetch_and_rank(self):
         con = connect()
 
@@ -1613,19 +1654,8 @@ class NIEApp(App):
 
         con.commit()
 
-        rows = con.execute(
-            """SELECT title, link, source_name, score, summary, published_ts, image_url
-               FROM articles
-               WHERE score >= ?
-               ORDER BY score DESC, created_ts DESC
-               LIMIT ?""",
-            (self.cfg.min_score, self.cfg.max_items)
-        ).fetchall()
+        rows = self._load_ticker_articles(con)
         con.close()
-
-        with self._lock:
-            self._articles = [dict(r) for r in rows]
-            self._ticker_idx = 0
 
         print(f"Fetched/inserted: {inserted}, ticker items: {len(rows)}")
         return inserted, failed_sources, total_sources
