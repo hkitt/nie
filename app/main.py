@@ -28,6 +28,7 @@ from kivy.uix.switch import Switch
 from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.image import AsyncImage
+from kivy.uix.spinner import Spinner
 from kivy.metrics import dp
 from kivy.graphics import Color, Rectangle
 
@@ -67,6 +68,28 @@ MONO_THEME = {
     "text_primary": (1, 1, 1, 1),
     "text_secondary": (0.8, 0.8, 0.8, 1),
     "button": (0.2, 0.2, 0.2, 1),
+}
+
+RED_BLUE_THEME = {
+    "background": (0.08, 0.05, 0.08, 1),
+    "surface": (0.18, 0.08, 0.12, 1),
+    "accent": (0.85, 0.2, 0.25, 1),
+    "text_primary": (1, 1, 1, 1),
+    "text_secondary": (0.9, 0.85, 0.9, 1),
+    "button": (0.12, 0.2, 0.45, 1),
+}
+
+THEME_CHOICES = ("Standard", "Rød/mørk blå", "Mono")
+THEME_INDEX_BY_LABEL = {
+    "Standard": 1,
+    "Rød/mørk blå": 2,
+    "Mono": 0,
+}
+THEME_LABEL_BY_INDEX = {value: key for key, value in THEME_INDEX_BY_LABEL.items()}
+THEME_MAP = {
+    0: MONO_THEME,
+    1: COLOR_THEME,
+    2: RED_BLUE_THEME,
 }
 
 
@@ -568,11 +591,16 @@ class AdminScreen(Screen):
         settings_grid.add_widget(self._min_score_input)
 
         settings_grid.add_widget(self._settings_label("Fargetema"))
-        self._theme_switch = Switch(active=True)
-        self._theme_switch.bind(
-            on_active=lambda instance, value: self._apply_theme_setting(value)
+        self._theme_spinner = Spinner(
+            text=THEME_CHOICES[0],
+            values=THEME_CHOICES,
+            size_hint_y=None,
+            height=dp(34),
         )
-        settings_grid.add_widget(self._theme_switch)
+        self._theme_spinner.bind(
+            text=lambda instance, value: self._apply_theme_setting(value)
+        )
+        settings_grid.add_widget(self._theme_spinner)
 
         content.add_widget(settings_grid)
 
@@ -643,9 +671,10 @@ class AdminScreen(Screen):
             self._min_score_input.text = str(
                 get_setting("min_score", defaults.min_score)
             )
-        if hasattr(self, "_theme_switch"):
+        if hasattr(self, "_theme_spinner"):
             theme_value = int(get_setting("color_theme", 1))
-            self._theme_switch.active = bool(theme_value)
+            theme_label = THEME_LABEL_BY_INDEX.get(theme_value, "Standard")
+            self._theme_spinner.text = theme_label
 
     def _switch_tab(self, tab_name):
         if hasattr(self, "_content_manager"):
@@ -761,20 +790,17 @@ class AdminScreen(Screen):
         set_setting("fetch_interval_sec", fetch_interval)
         set_setting("ticker_interval_sec", ticker_interval)
         set_setting("min_score", min_score)
-        if hasattr(self, "_theme_switch"):
-            set_setting("color_theme", int(self._theme_switch.active))
         app = App.get_running_app()
         if app:
             app.apply_settings(fetch_interval, ticker_interval, min_score)
-            if hasattr(self, "_theme_switch"):
-                app.apply_color_theme(self._theme_switch.active)
         self._set_status("Innstillinger lagret.")
 
-    def _apply_theme_setting(self, use_color):
-        set_setting("color_theme", int(use_color))
+    def _apply_theme_setting(self, theme_label):
+        theme_index = THEME_INDEX_BY_LABEL.get(theme_label, 1)
+        set_setting("color_theme", theme_index)
         app = App.get_running_app()
         if app:
-            app.apply_color_theme(use_color)
+            app.apply_color_theme(theme_index)
 
     def _fetch_update_from_github(self):
         app = App.get_running_app()
@@ -1446,7 +1472,7 @@ class NIEApp(App):
         )
 
         self._startup_theme_smoke_check()
-        self.apply_color_theme(self.use_color_theme)
+        self.apply_color_theme(self.theme_index)
 
         return self.sm
 
@@ -1534,9 +1560,11 @@ class NIEApp(App):
         python = sys.executable
         os.execv(python, [python] + sys.argv)
 
-    def apply_color_theme(self, use_color):
-        self.use_color_theme = bool(use_color)
-        self.theme = COLOR_THEME if self.use_color_theme else MONO_THEME
+    def apply_color_theme(self, theme_index):
+        if theme_index not in THEME_MAP:
+            theme_index = 1
+        self.theme_index = theme_index
+        self.theme = THEME_MAP[theme_index]
         if self.ticker:
             self.ticker.apply_theme(self.theme)
         if self.admin:
@@ -1564,8 +1592,11 @@ class NIEApp(App):
             get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
         )
         min_score = float(get_setting("min_score", defaults.min_score))
-        self.use_color_theme = bool(int(get_setting("color_theme", 1)))
-        self.theme = COLOR_THEME if self.use_color_theme else MONO_THEME
+        theme_index = int(get_setting("color_theme", 1))
+        if theme_index not in THEME_MAP:
+            theme_index = 1
+        self.theme_index = theme_index
+        self.theme = THEME_MAP[theme_index]
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
         self.cfg.min_score = min_score
