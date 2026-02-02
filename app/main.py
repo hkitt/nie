@@ -329,6 +329,7 @@ class AdminScreen(Screen):
             getattr(self, "_back_button", None),
             getattr(self, "_refresh_button", None),
             getattr(self, "_exit_button", None),
+            getattr(self, "_fetch_update_button", None),
         ):
             if button:
                 button.background_normal = ""
@@ -583,6 +584,10 @@ class AdminScreen(Screen):
         settings_save = Button(text="Lagre innstillinger")
         settings_save.bind(on_release=lambda *_: self._save_settings())
         settings_actions.add_widget(settings_save)
+        fetch_update = Button(text="Fetch update from Github")
+        fetch_update.bind(on_release=lambda *_: self._fetch_update_from_github())
+        settings_actions.add_widget(fetch_update)
+        self._fetch_update_button = fetch_update
         content.add_widget(settings_actions)
 
         scroll.add_widget(content)
@@ -770,6 +775,12 @@ class AdminScreen(Screen):
         app = App.get_running_app()
         if app:
             app.apply_color_theme(use_color)
+
+    def _fetch_update_from_github(self):
+        app = App.get_running_app()
+        if not app:
+            return
+        app.update_and_restart(status_callback=self._set_status)
 
     def _add_source(self):
         name = self._new_name_input.text.strip()
