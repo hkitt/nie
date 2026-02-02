@@ -14,8 +14,8 @@
                 text: "\u00c5pne"
                 on_release: app.open_current()
             Button:
-                text: "X"
-                on_release: setattr(__import__('kivy.core.window').core.window.Window, 'fullscreen', False)
+                text: "Lukk"
+                on_release: app.exit_app()
 
         Label:
             text: root.headline

@@ -1,7 +1,10 @@
+import os
+import sys
 import time
 import threading
 import webbrowser
 import sqlite3
+import subprocess
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -70,7 +73,6 @@ class TickerScreen(Screen):
             self.build_ui()
             self._ui_built = True
         self._sync_labels()
-        self.set_fullscreen_status(Window.fullscreen)
         app = App.get_running_app()
         if app:
             self.apply_theme(app.theme)
@@ -89,28 +91,12 @@ class TickerScreen(Screen):
         admin_button.bind(on_release=lambda *_: App.get_running_app().show_admin())
         open_button = Button(text="Åpne")
         open_button.bind(on_release=lambda *_: App.get_running_app().open_current())
-        fullscreen_button = Button(text="Full")
-        fullscreen_button.bind(
-            on_release=lambda *_: App.get_running_app().toggle_fullscreen()
-        )
-        self._fullscreen_label = Label(
-            text="Full: OFF",
-            font_size="14sp",
-            size_hint_x=None,
-            width=dp(120),
-            halign="left",
-            valign="middle",
-        )
-        self._fullscreen_label.bind(size=self._fullscreen_label.setter("text_size"))
+        exit_button = Button(text="Lukk")
+        exit_button.bind(on_release=lambda *_: App.get_running_app().exit_app())
         self._admin_button = admin_button
         self._open_button = open_button
-        self._fullscreen_button = fullscreen_button
-        for widget in (
-            admin_button,
-            open_button,
-            fullscreen_button,
-            self._fullscreen_label,
-        ):
+        self._exit_button = exit_button
+        for widget in (admin_button, open_button, exit_button):
             top_bar.add_widget(widget)
         self._top_bar = top_bar
 
@@ -133,21 +119,14 @@ class TickerScreen(Screen):
         running_label.bind(size=running_label.setter("text_size"))
         self._running_label = running_label
 
-        self._headline_button = Button(
+        self._headline_label = Label(
             text=self.headline,
             font_size="28sp",
             bold=True,
             halign="left",
             valign="middle",
-            background_normal="",
-            background_down="",
-            background_color=(0, 0, 0, 0),
-            color=(1, 1, 1, 1),
         )
-        self._headline_button.bind(
-            on_release=lambda *_: App.get_running_app().open_current()
-        )
-        self._headline_button.bind(size=self._headline_button.setter("text_size"))
+        self._headline_label.bind(size=self._headline_label.setter("text_size"))
 
         self._subline_label = Label(
             text=self.subline,
@@ -158,7 +137,7 @@ class TickerScreen(Screen):
         self._subline_label.bind(size=self._subline_label.setter("text_size"))
 
         content_area.add_widget(running_label)
-        content_area.add_widget(self._headline_button)
+        content_area.add_widget(self._headline_label)
         content_area.add_widget(self._subline_label)
 
         layout.add_widget(top_bar)
@@ -191,14 +170,14 @@ class TickerScreen(Screen):
             self._top_bar_bg.rgba = theme["surface"]
         if hasattr(self, "_running_label"):
             self._running_label.color = theme["text_secondary"]
-        if hasattr(self, "_headline_button"):
-            self._headline_button.color = theme["text_primary"]
+        if hasattr(self, "_headline_label"):
+            self._headline_label.color = theme["text_primary"]
         if hasattr(self, "_subline_label"):
             self._subline_label.color = theme["text_secondary"]
         for button in (
             getattr(self, "_admin_button", None),
             getattr(self, "_open_button", None),
-            getattr(self, "_fullscreen_button", None),
+            getattr(self, "_exit_button", None),
         ):
             if button:
                 button.background_normal = ""
@@ -207,15 +186,10 @@ class TickerScreen(Screen):
                 button.color = theme["text_primary"]
 
     def _sync_labels(self):
-        if hasattr(self, "_headline_button"):
-            self._headline_button.text = self.headline
+        if hasattr(self, "_headline_label"):
+            self._headline_label.text = self.headline
         if hasattr(self, "_subline_label"):
             self._subline_label.text = self.subline
-
-    def set_fullscreen_status(self, is_fullscreen):
-        if hasattr(self, "_fullscreen_label"):
-            status = "ON" if is_fullscreen else "OFF"
-            self._fullscreen_label.text = f"Full: {status}"
 
     def on_headline(self, *_args):
         self._sync_labels()
@@ -233,7 +207,6 @@ class AdminScreen(Screen):
             self.build_ui()
             self._ui_built = True
         self.refresh()
-        self.set_fullscreen_status(Window.fullscreen)
         app = App.get_running_app()
         if app:
             self.apply_theme(app.theme)
@@ -265,26 +238,14 @@ class AdminScreen(Screen):
             top_bar.add_widget(button)
 
         refresh_button = Button(text="Refresh", size_hint_x=None, width=dp(100))
-        refresh_button.bind(on_release=lambda *_: self.refresh())
+        refresh_button.bind(on_release=lambda *_: self.trigger_update())
         top_bar.add_widget(refresh_button)
         self._refresh_button = refresh_button
 
-        fullscreen_button = Button(text="Full", size_hint_x=None, width=dp(80))
-        fullscreen_button.bind(
-            on_release=lambda *_: App.get_running_app().toggle_fullscreen()
-        )
-        self._fullscreen_label = Label(
-            text="Full: OFF",
-            font_size="14sp",
-            size_hint_x=None,
-            width=dp(120),
-            halign="left",
-            valign="middle",
-        )
-        self._fullscreen_label.bind(size=self._fullscreen_label.setter("text_size"))
-        top_bar.add_widget(fullscreen_button)
-        top_bar.add_widget(self._fullscreen_label)
-        self._fullscreen_button = fullscreen_button
+        exit_button = Button(text="Lukk", size_hint_x=None, width=dp(80))
+        exit_button.bind(on_release=lambda *_: App.get_running_app().exit_app())
+        top_bar.add_widget(exit_button)
+        self._exit_button = exit_button
         self._top_bar = top_bar
 
         layout.add_widget(top_bar)
@@ -349,7 +310,7 @@ class AdminScreen(Screen):
         for button in (
             getattr(self, "_back_button", None),
             getattr(self, "_refresh_button", None),
-            getattr(self, "_fullscreen_button", None),
+            getattr(self, "_exit_button", None),
         ):
             if button:
                 button.background_normal = ""
@@ -728,10 +689,10 @@ class AdminScreen(Screen):
         if hasattr(self, "_status_label"):
             self._status_label.text = message
 
-    def set_fullscreen_status(self, is_fullscreen):
-        if hasattr(self, "_fullscreen_label"):
-            status = "ON" if is_fullscreen else "OFF"
-            self._fullscreen_label.text = f"Full: {status}"
+    def trigger_update(self):
+        app = App.get_running_app()
+        if app:
+            app.update_and_restart(self._set_status)
 
     def _save_settings(self):
         try:
@@ -1151,12 +1112,10 @@ class NIEApp(App):
         self.sm.add_widget(self.ticker)
         self.sm.add_widget(self.admin)
 
-        self._fullscreen_enabled = False
-        Window.fullscreen = False
-        Window.borderless = False
+        Window.fullscreen = True
+        Window.borderless = True
         if hasattr(Window, "state"):
-            Window.state = "normal"
-        self._apply_safe_windowed_size()
+            Window.state = "fullscreen"
 
         self._articles = []
         self._ticker_idx = 0
@@ -1193,6 +1152,9 @@ class NIEApp(App):
         if link:
             webbrowser.open(link)
 
+    def exit_app(self):
+        self.stop()
+
     def toggle_admin(self):
         self.sm.current = "admin" if self.sm.current != "admin" else "ticker"
 
@@ -1202,60 +1164,39 @@ class NIEApp(App):
     def show_ticker(self):
         self.sm.current = "ticker"
 
-    def toggle_fullscreen(self):
-        enabled = not bool(Window.fullscreen)
-        self._fullscreen_enabled = enabled
-        self.set_fullscreen(enabled)
+    def update_and_restart(self, status_callback=None):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-    def set_fullscreen(self, enabled):
-        self._fullscreen_enabled = enabled
-        if enabled:
-            Window.fullscreen = True
-        else:
-            Window.fullscreen = False
-            Window.borderless = False
-            if hasattr(Window, "state"):
-                Window.state = "normal"
-            Clock.schedule_once(lambda *_: self._apply_safe_windowed_size(), 0)
-            Clock.schedule_once(self._ensure_windowed, 0)
-        self.update_fullscreen_status()
+        def set_status(message):
+            if status_callback:
+                Clock.schedule_once(lambda *_: status_callback(message), 0)
 
-    def _ensure_windowed(self, *_args):
-        if Window.fullscreen:
-            Window.fullscreen = False
-        self._apply_safe_windowed_size()
-        self.update_fullscreen_status()
+        def worker():
+            set_status("Henter siste versjon fra GitHub…")
+            try:
+                result = subprocess.run(
+                    ["git", "pull", "--rebase"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except Exception as exc:
+                print("Update failed:", exc)
+                set_status("Oppdatering feilet.")
+                return
+            if result.returncode != 0:
+                print("Update failed:", result.stderr or result.stdout)
+                set_status("Oppdatering feilet.")
+                return
+            set_status("Oppdatering fullført. Starter på nytt…")
+            Clock.schedule_once(lambda *_: self._restart_app(), 0)
 
-    def _apply_safe_windowed_size(self):
-        safe_width, safe_height = self._get_safe_window_size()
-        Window.size = (safe_width, safe_height)
-        system_size = getattr(Window, "system_size", None)
-        if system_size and system_size[0] and system_size[1]:
-            left = max(0, int((system_size[0] - safe_width) / 2))
-            top = max(0, int((system_size[1] - safe_height) / 2))
-            Window.left = left
-            Window.top = top
+        threading.Thread(target=worker, daemon=True).start()
 
-    def _get_safe_window_size(self):
-        fallback_width = 800
-        fallback_height = 430
-        system_size = getattr(Window, "system_size", None)
-        if system_size and system_size[0] and system_size[1]:
-            system_width = int(system_size[0])
-            system_height = int(system_size[1])
-            height_limit = max(300, system_height - 60)
-            safe_width = min(fallback_width, system_width)
-            safe_height = min(fallback_height, height_limit)
-            return safe_width, safe_height
-        return fallback_width, fallback_height
-
-    def update_fullscreen_status(self):
-        is_fullscreen = bool(Window.fullscreen)
-        self._fullscreen_enabled = is_fullscreen
-        if self.ticker:
-            self.ticker.set_fullscreen_status(is_fullscreen)
-        if self.admin:
-            self.admin.set_fullscreen_status(is_fullscreen)
+    def _restart_app(self):
+        python = sys.executable
+        os.execv(python, [python] + sys.argv)
 
     def apply_color_theme(self, use_color):
         self.use_color_theme = bool(use_color)
