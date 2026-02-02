@@ -1124,11 +1124,11 @@ class ReaderScreen(Screen):
         super().__init__(**kwargs)
         self.current_article = None
         self._fetch_token = 0
+        self._pending_theme = None
 
     def on_pre_enter(self, *_args):
         if not self._ui_built:
             self.build_ui()
-            self._ui_built = True
         if self.current_article:
             self.render_article(self.current_article)
         app = App.get_running_app()
@@ -1239,9 +1239,14 @@ class ReaderScreen(Screen):
         layout.add_widget(top_bar)
         layout.add_widget(scroll)
         self.add_widget(layout)
-        theme = App.get_running_app().theme if App.get_running_app() else COLOR_THEME
+        theme = (
+            self._pending_theme
+            or (App.get_running_app().theme if App.get_running_app() else COLOR_THEME)
+        )
         self._apply_backgrounds(theme)
+        self._ui_built = True
         self.apply_theme(theme)
+        self._pending_theme = None
 
     def _apply_backgrounds(self, theme):
         self._layout_bg = self._add_background(self._layout, theme["background"])
@@ -1260,15 +1265,18 @@ class ReaderScreen(Screen):
         return color_instruction
 
     def apply_theme(self, theme):
+        if not self._ui_built:
+            self._pending_theme = theme
+            return
         if hasattr(self, "_layout_bg"):
             self._layout_bg.rgba = theme["background"]
         if hasattr(self, "_top_bar_bg"):
             self._top_bar_bg.rgba = theme["surface"]
         for label, color_key in (
-            (self._title_label, "text_primary"),
-            (self._meta_label, "text_secondary"),
-            (self._body_label, "text_primary"),
-            (self._note_label, "text_secondary"),
+            (getattr(self, "_title_label", None), "text_primary"),
+            (getattr(self, "_meta_label", None), "text_secondary"),
+            (getattr(self, "_body_label", None), "text_primary"),
+            (getattr(self, "_note_label", None), "text_secondary"),
         ):
             if label:
                 label.color = theme[color_key]
@@ -1388,9 +1396,15 @@ class NIEApp(App):
             self.cfg.ticker_interval_sec,
         )
 
+        self._startup_theme_smoke_check()
         self.apply_color_theme(self.use_color_theme)
 
         return self.sm
+
+    def _startup_theme_smoke_check(self):
+        test_reader = ReaderScreen(name="_theme_check")
+        test_reader.apply_theme(self.theme)
+        assert test_reader._pending_theme == self.theme
 
     def rotate_ticker(self, *_):
         with self._lock:
