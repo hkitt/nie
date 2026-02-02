@@ -10,6 +10,7 @@ import threading
 import webbrowser
 import sqlite3
 import subprocess
+from datetime import datetime
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -25,6 +26,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.switch import Switch
 from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
+from kivy.uix.image import AsyncImage
 from kivy.metrics import dp
 from kivy.graphics import Color, Rectangle
 
@@ -46,6 +48,7 @@ from db import (
 from rss import fetch_feed
 from ranker import score_article, recency_boost
 from settings import EngineConfig
+from reader import html_to_simple_markup, fetch_article_content
 
 COLOR_THEME = {
     "background": (0.05, 0.08, 0.12, 1),
@@ -132,6 +135,7 @@ class TickerScreen(Screen):
             valign="middle",
         )
         self._headline_label.bind(size=self._headline_label.setter("text_size"))
+        self._headline_label.bind(on_touch_down=self._on_headline_touch)
 
         self._subline_label = Label(
             text=self.subline,
@@ -201,6 +205,14 @@ class TickerScreen(Screen):
 
     def on_subline(self, *_args):
         self._sync_labels()
+
+    def _on_headline_touch(self, instance, touch):
+        if instance.collide_point(*touch.pos):
+            app = App.get_running_app()
+            if app:
+                app.open_current()
+            return True
+        return False
 
 
 class AdminScreen(Screen):
@@ -1105,6 +1117,246 @@ class AdminScreen(Screen):
         popup.open()
 
 
+class ReaderScreen(Screen):
+    _ui_built = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.current_article = None
+        self._fetch_token = 0
+
+    def on_pre_enter(self, *_args):
+        if not self._ui_built:
+            self.build_ui()
+            self._ui_built = True
+        if self.current_article:
+            self.render_article(self.current_article)
+        app = App.get_running_app()
+        if app:
+            self.apply_theme(app.theme)
+
+    def build_ui(self):
+        layout = BoxLayout(orientation="vertical")
+        self._layout = layout
+
+        top_bar = BoxLayout(
+            size_hint_y=None,
+            height=dp(56),
+            spacing=dp(8),
+            padding=(dp(12), dp(8)),
+        )
+        back_button = Button(text="Tilbake")
+        back_button.bind(on_release=lambda *_: App.get_running_app().show_ticker())
+        open_button = Button(text="Åpne i nettleser")
+        open_button.bind(on_release=lambda *_: App.get_running_app().open_in_browser())
+        self._back_button = back_button
+        self._open_button = open_button
+        top_bar.add_widget(back_button)
+        top_bar.add_widget(open_button)
+        self._top_bar = top_bar
+
+        scroll = ScrollView(do_scroll_x=False)
+        content = GridLayout(
+            cols=1,
+            size_hint_y=None,
+            spacing=dp(12),
+            padding=(dp(12), dp(12)),
+        )
+        content.bind(minimum_height=content.setter("height"))
+        scroll.add_widget(content)
+        self._content = content
+        self._scroll = scroll
+
+        self._title_label = Label(
+            text="",
+            font_size="28sp",
+            bold=True,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+        )
+        self._title_label.bind(
+            size=self._title_label.setter("text_size"),
+            texture_size=self._set_height_from_texture,
+        )
+
+        self._meta_label = Label(
+            text="",
+            font_size="14sp",
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+        )
+        self._meta_label.bind(
+            size=self._meta_label.setter("text_size"),
+            texture_size=self._set_height_from_texture,
+        )
+
+        self._image = AsyncImage(
+            source="",
+            allow_stretch=True,
+            keep_ratio=True,
+            size_hint_y=None,
+            height=0,
+            opacity=0,
+        )
+
+        self._body_label = Label(
+            text="",
+            font_size="16sp",
+            markup=True,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+        )
+        self._body_label.bind(
+            width=self._update_body_width,
+            texture_size=self._set_height_from_texture,
+        )
+
+        self._note_label = Label(
+            text="",
+            font_size="12sp",
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            opacity=0,
+        )
+        self._note_label.bind(
+            size=self._note_label.setter("text_size"),
+            texture_size=self._set_height_from_texture,
+        )
+
+        for widget in (
+            self._title_label,
+            self._meta_label,
+            self._image,
+            self._note_label,
+            self._body_label,
+        ):
+            content.add_widget(widget)
+
+        layout.add_widget(top_bar)
+        layout.add_widget(scroll)
+        self.add_widget(layout)
+        theme = App.get_running_app().theme if App.get_running_app() else COLOR_THEME
+        self._apply_backgrounds(theme)
+        self.apply_theme(theme)
+
+    def _apply_backgrounds(self, theme):
+        self._layout_bg = self._add_background(self._layout, theme["background"])
+        self._top_bar_bg = self._add_background(self._top_bar, theme["surface"])
+
+    def _add_background(self, widget, color):
+        with widget.canvas.before:
+            color_instruction = Color(*color)
+            rect = Rectangle(pos=widget.pos, size=widget.size)
+
+        def update_rect(*_args):
+            rect.pos = widget.pos
+            rect.size = widget.size
+
+        widget.bind(pos=update_rect, size=update_rect)
+        return color_instruction
+
+    def apply_theme(self, theme):
+        if hasattr(self, "_layout_bg"):
+            self._layout_bg.rgba = theme["background"]
+        if hasattr(self, "_top_bar_bg"):
+            self._top_bar_bg.rgba = theme["surface"]
+        for label, color_key in (
+            (self._title_label, "text_primary"),
+            (self._meta_label, "text_secondary"),
+            (self._body_label, "text_primary"),
+            (self._note_label, "text_secondary"),
+        ):
+            if label:
+                label.color = theme[color_key]
+        for button in (
+            getattr(self, "_back_button", None),
+            getattr(self, "_open_button", None),
+        ):
+            if button:
+                button.background_normal = ""
+                button.background_down = ""
+                button.background_color = theme["button"]
+                button.color = theme["text_primary"]
+
+    def render_article(self, article):
+        self.current_article = article
+        self._fetch_token += 1
+        fetch_token = self._fetch_token
+
+        title = article.get("title") or ""
+        source_name = article.get("source_name") or ""
+        published_ts = article.get("published_ts")
+        score = article.get("score")
+        published_str = self._format_published(published_ts)
+        score_str = f"{score:.1f}" if score is not None else "?"
+        self._title_label.text = title
+        self._meta_label.text = f"{source_name} | {published_str} | score {score_str}"
+
+        image_url = article.get("image_url")
+        self._set_image(image_url)
+
+        summary = article.get("summary") or ""
+        self._body_label.text = html_to_simple_markup(summary)
+        self._note_label.text = ""
+        self._note_label.opacity = 0
+        self._note_label.height = 0
+
+        def worker():
+            result = fetch_article_content(
+                article.get("link", ""),
+                rss_summary=summary,
+                rss_image_url=image_url,
+            )
+            Clock.schedule_once(
+                lambda *_: self._apply_fulltext(result, fetch_token), 0
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_fulltext(self, result, fetch_token):
+        if fetch_token != self._fetch_token:
+            return
+        if not result:
+            return
+        text = result.get("text", "")
+        if text:
+            self._body_label.text = html_to_simple_markup(text)
+        if result.get("image_url") and not self.current_article.get("image_url"):
+            self._set_image(result.get("image_url"))
+        if result.get("used_fallback"):
+            self._note_label.text = "Kunne ikke hente fulltekst, viser forhåndsvisning."
+            self._note_label.opacity = 1
+            self._note_label.height = self._note_label.texture_size[1]
+
+    def _set_height_from_texture(self, label, *_args):
+        label.height = label.texture_size[1]
+
+    def _update_body_width(self, instance, *_args):
+        instance.text_size = (instance.width, None)
+
+    def _set_image(self, image_url):
+        if image_url:
+            self._image.source = image_url
+            self._image.opacity = 1
+            self._image.height = dp(220)
+        else:
+            self._image.source = ""
+            self._image.opacity = 0
+            self._image.height = 0
+
+    def _format_published(self, published_ts):
+        if not published_ts:
+            return "ukjent tid"
+        try:
+            return datetime.fromtimestamp(published_ts).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "ukjent tid"
+
+
 class NIEApp(App):
     def build(self):
         init_db()
@@ -1114,8 +1366,10 @@ class NIEApp(App):
         self.sm = ScreenManager()
         self.ticker = TickerScreen(name="ticker")
         self.admin = AdminScreen(name="admin")
+        self.reader = ReaderScreen(name="reader")
         self.sm.add_widget(self.ticker)
         self.sm.add_widget(self.admin)
+        self.sm.add_widget(self.reader)
 
         Window.fullscreen = True
         Window.borderless = True
@@ -1125,6 +1379,7 @@ class NIEApp(App):
         self._articles = []
         self._ticker_idx = 0
         self._lock = threading.Lock()
+        self._current_article = None
 
         threading.Thread(target=self.engine_loop, daemon=True).start()
 
@@ -1143,6 +1398,7 @@ class NIEApp(App):
                 self.ticker.headline = "Ingen saker enda…"
                 self.ticker.subline = "Venter på RSS-henting."
                 self.ticker.current_link = ""
+                self._current_article = None
                 return
 
             a = self._articles[self._ticker_idx % len(self._articles)]
@@ -1151,11 +1407,18 @@ class NIEApp(App):
         self.ticker.headline = a["title"]
         self.ticker.subline = f'{a["source_name"]} | score {a["score"]:.1f}'
         self.ticker.current_link = a["link"]
+        self._current_article = a
 
     def open_current(self):
-        link = self.ticker.current_link
-        if link:
-            webbrowser.open(link)
+        article = self._current_article
+        if article:
+            self.show_reader(article)
+
+    def open_in_browser(self):
+        reader = getattr(self, "reader", None)
+        article = self._current_article or (reader.current_article if reader else None)
+        if article and article.get("link"):
+            webbrowser.open(article["link"])
 
     def exit_app(self):
         self.stop()
@@ -1168,6 +1431,11 @@ class NIEApp(App):
 
     def show_ticker(self):
         self.sm.current = "ticker"
+
+    def show_reader(self, article):
+        self._current_article = article
+        self.reader.current_article = article
+        self.sm.current = "reader"
 
     def update_and_restart(self, status_callback=None):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1210,6 +1478,8 @@ class NIEApp(App):
             self.ticker.apply_theme(self.theme)
         if self.admin:
             self.admin.apply_theme(self.theme)
+        if self.reader:
+            self.reader.apply_theme(self.theme)
 
     def apply_settings(self, fetch_interval, ticker_interval, min_score):
         self.cfg.fetch_interval_sec = fetch_interval
@@ -1268,9 +1538,19 @@ class NIEApp(App):
 
                 try:
                     con.execute(
-                        """INSERT INTO articles(guid,title,link,source_name,published_ts,summary,score,created_ts)
-                           VALUES(?,?,?,?,?,?,?,?)""",
-                        (it["guid"], it["title"], it["link"], s["name"], it["published_ts"], it["summary"], score, now)
+                        """INSERT INTO articles(guid,title,link,source_name,published_ts,summary,image_url,score,created_ts)
+                           VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (
+                            it["guid"],
+                            it["title"],
+                            it["link"],
+                            s["name"],
+                            it["published_ts"],
+                            it["summary"],
+                            it.get("image_url"),
+                            score,
+                            now,
+                        )
                     )
                     inserted += 1
                 except Exception:
@@ -1279,7 +1559,7 @@ class NIEApp(App):
         con.commit()
 
         rows = con.execute(
-            """SELECT title, link, source_name, score
+            """SELECT title, link, source_name, score, summary, published_ts, image_url
                FROM articles
                WHERE score >= ?
                ORDER BY score DESC, created_ts DESC
