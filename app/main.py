@@ -841,9 +841,13 @@ class AdminScreen(Screen):
         self._ticker_input = self._settings_input()
         settings_grid.add_widget(self._ticker_input)
 
-        settings_grid.add_widget(self._settings_label("Rotation interval (seconds)"))
+        settings_grid.add_widget(self._settings_label("News duration (seconds)"))
         self._rotation_input = self._settings_input()
         settings_grid.add_widget(self._rotation_input)
+
+        settings_grid.add_widget(self._settings_label("Crypto duration (seconds)"))
+        self._crypto_rotation_input = self._settings_input()
+        settings_grid.add_widget(self._crypto_rotation_input)
 
         settings_grid.add_widget(self._settings_label("Min score"))
         self._min_score_input = self._settings_input()
@@ -932,7 +936,11 @@ class AdminScreen(Screen):
             )
         if hasattr(self, "_rotation_input"):
             self._rotation_input.text = str(
-                get_setting("rotation_seconds", defaults.rotation_seconds)
+                get_setting("news_rotation_seconds", defaults.news_rotation_seconds)
+            )
+        if hasattr(self, "_crypto_rotation_input"):
+            self._crypto_rotation_input.text = str(
+                get_setting("crypto_rotation_seconds", defaults.crypto_rotation_seconds)
             )
         if hasattr(self, "_theme_spinner"):
             theme_value = int(get_setting("color_theme", 1))
@@ -1041,24 +1049,33 @@ class AdminScreen(Screen):
         try:
             fetch_interval = int(self._fetch_input.text.strip())
             ticker_interval = int(self._ticker_input.text.strip())
-            rotation_seconds = int(self._rotation_input.text.strip())
+            news_rotation_seconds = int(self._rotation_input.text.strip())
+            crypto_rotation_seconds = int(self._crypto_rotation_input.text.strip())
             min_score = float(self._min_score_input.text.strip())
         except ValueError:
             self._set_status("Ugyldig format i innstillinger.")
             return
 
-        if fetch_interval <= 0 or ticker_interval <= 0 or rotation_seconds <= 0:
+        if fetch_interval <= 0 or ticker_interval <= 0:
             self._set_status("Intervaller må være større enn 0.")
+            return
+        if news_rotation_seconds < 5 or crypto_rotation_seconds < 5:
+            self._set_status("Rotasjonsintervall må være minst 5 sekunder.")
             return
 
         set_setting("fetch_interval_sec", fetch_interval)
         set_setting("ticker_interval_sec", ticker_interval)
-        set_setting("rotation_seconds", rotation_seconds)
+        set_setting("news_rotation_seconds", news_rotation_seconds)
+        set_setting("crypto_rotation_seconds", crypto_rotation_seconds)
         set_setting("min_score", min_score)
         app = App.get_running_app()
         if app:
             app.apply_settings(
-                fetch_interval, ticker_interval, rotation_seconds, min_score
+                fetch_interval,
+                ticker_interval,
+                news_rotation_seconds,
+                crypto_rotation_seconds,
+                min_score,
             )
         self._set_status("Innstillinger lagret.")
 
@@ -1752,10 +1769,8 @@ class NIEApp(App):
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
         )
-        self._rotation_event = Clock.schedule_interval(
-            self.rotate_screen,
-            self.cfg.rotation_seconds,
-        )
+        self._rotation_event = None
+        self._schedule_rotation(self.cfg.news_rotation_seconds)
         self._crypto_event = Clock.schedule_interval(
             lambda *_: self.request_crypto_update(),
             60,
@@ -1788,10 +1803,21 @@ class NIEApp(App):
         self.ticker.current_link = a["link"]
         self._current_article = a
 
+    def _schedule_rotation(self, delay):
+        if getattr(self, "_rotation_event", None) is not None:
+            self._rotation_event.cancel()
+        self._rotation_event = Clock.schedule_once(self.rotate_screen, delay)
+
     def rotate_screen(self, *_):
-        if self.sm.current not in {"ticker", "crypto"}:
-            return
-        self.sm.current = "crypto" if self.sm.current == "ticker" else "ticker"
+        if self.sm.current == "ticker":
+            self.sm.current = "crypto"
+            next_delay = self.cfg.crypto_rotation_seconds
+        elif self.sm.current == "crypto":
+            self.sm.current = "ticker"
+            next_delay = self.cfg.news_rotation_seconds
+        else:
+            next_delay = self.cfg.news_rotation_seconds
+        self._schedule_rotation(next_delay)
 
     def request_crypto_update(self, force=False):
         now = time.time()
@@ -1933,10 +1959,18 @@ class NIEApp(App):
         if self.reader:
             self.reader.apply_theme(self.theme)
 
-    def apply_settings(self, fetch_interval, ticker_interval, rotation_seconds, min_score):
+    def apply_settings(
+        self,
+        fetch_interval,
+        ticker_interval,
+        news_rotation_seconds,
+        crypto_rotation_seconds,
+        min_score,
+    ):
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
-        self.cfg.rotation_seconds = rotation_seconds
+        self.cfg.news_rotation_seconds = news_rotation_seconds
+        self.cfg.crypto_rotation_seconds = crypto_rotation_seconds
         self.cfg.min_score = min_score
         if getattr(self, "_ticker_event", None) is not None:
             self._ticker_event.cancel()
@@ -1944,12 +1978,14 @@ class NIEApp(App):
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
         )
-        if getattr(self, "_rotation_event", None) is not None:
-            self._rotation_event.cancel()
-        self._rotation_event = Clock.schedule_interval(
-            self.rotate_screen,
-            self.cfg.rotation_seconds,
+        rotation_delay = (
+            self.cfg.news_rotation_seconds
+            if self.sm.current == "ticker"
+            else self.cfg.crypto_rotation_seconds
+            if self.sm.current == "crypto"
+            else self.cfg.news_rotation_seconds
         )
+        self._schedule_rotation(rotation_delay)
 
     def _load_settings_from_db(self):
         defaults = EngineConfig()
@@ -1959,8 +1995,16 @@ class NIEApp(App):
         ticker_interval = int(
             get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
         )
-        rotation_seconds = int(
-            get_setting("rotation_seconds", defaults.rotation_seconds)
+        news_rotation_seconds = int(
+            get_setting(
+                "news_rotation_seconds",
+                get_setting("rotation_seconds", defaults.news_rotation_seconds),
+            )
+        )
+        crypto_rotation_seconds = int(
+            get_setting(
+                "crypto_rotation_seconds", defaults.crypto_rotation_seconds
+            )
         )
         min_score = float(get_setting("min_score", defaults.min_score))
         theme_index = int(get_setting("color_theme", 1))
@@ -1970,7 +2014,8 @@ class NIEApp(App):
         self.theme = THEME_MAP[theme_index]
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
-        self.cfg.rotation_seconds = rotation_seconds
+        self.cfg.news_rotation_seconds = news_rotation_seconds
+        self.cfg.crypto_rotation_seconds = crypto_rotation_seconds
         self.cfg.min_score = min_score
 
     def engine_loop(self):
