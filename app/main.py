@@ -11,6 +11,8 @@ import threading
 import webbrowser
 import sqlite3
 import subprocess
+import json
+import urllib.request
 from datetime import datetime
 
 from kivy.app import App
@@ -29,8 +31,9 @@ from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.image import AsyncImage
 from kivy.uix.spinner import Spinner
+from kivy.uix.widget import Widget
 from kivy.metrics import dp
-from kivy.graphics import Color, Rectangle
+from kivy.graphics import Color, Rectangle, Line
 
 from db import (
     init_db,
@@ -91,6 +94,258 @@ THEME_MAP = {
     1: COLOR_THEME,
     2: RED_BLUE_THEME,
 }
+
+CRYPTO_COINS = (
+    {"id": "bitcoin", "label": "Bitcoin"},
+    {"id": "ethereum", "label": "Ethereum"},
+    {"id": "solana", "label": "Solana"},
+    {"id": "cardano", "label": "Cardano"},
+)
+
+POSITIVE_COLOR = (0.2, 0.8, 0.4, 1)
+NEGATIVE_COLOR = (0.9, 0.3, 0.3, 1)
+
+
+class Sparkline(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.prices = []
+        self.line_color = COLOR_THEME["accent"]
+        self.bind(pos=self._redraw, size=self._redraw)
+
+    def set_prices(self, prices, line_color=None):
+        self.prices = prices or []
+        if line_color is not None:
+            self.line_color = line_color
+        self._redraw()
+
+    def _redraw(self, *_args):
+        self.canvas.clear()
+        if not self.prices or self.width <= 0 or self.height <= 0:
+            return
+        min_price = min(self.prices)
+        max_price = max(self.prices)
+        span = max_price - min_price or 1
+        count = len(self.prices)
+        if count < 2:
+            return
+        points = []
+        for idx, price in enumerate(self.prices):
+            x = self.x + (idx / (count - 1)) * self.width
+            y = self.y + ((price - min_price) / span) * self.height
+            points.extend([x, y])
+        with self.canvas:
+            Color(*self.line_color)
+            Line(points=points, width=1.2)
+
+
+class CryptoScreen(Screen):
+    status = StringProperty("")
+    _ui_built = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._pending_data = None
+        self._pending_error = None
+
+    def on_pre_enter(self, *_args):
+        if not self._ui_built:
+            self.build_ui()
+            self._ui_built = True
+            if self._pending_data is not None:
+                self.update_data(self._pending_data, error=self._pending_error)
+        app = App.get_running_app()
+        if app:
+            self.apply_theme(app.theme)
+            app.request_crypto_update()
+
+    def build_ui(self):
+        layout = BoxLayout(orientation="vertical")
+        self._layout = layout
+
+        top_bar = BoxLayout(
+            size_hint_y=None,
+            height=dp(56),
+            spacing=dp(8),
+            padding=(dp(12), dp(8)),
+        )
+        admin_button = Button(text="Admin")
+        admin_button.bind(on_release=lambda *_: App.get_running_app().show_admin())
+        ticker_button = Button(text="Nyheter")
+        ticker_button.bind(on_release=lambda *_: App.get_running_app().show_ticker())
+        status_label = Label(
+            text="",
+            font_size="14sp",
+            halign="right",
+            valign="middle",
+        )
+        status_label.bind(size=status_label.setter("text_size"))
+        self._status_label = status_label
+        self._admin_button = admin_button
+        self._ticker_button = ticker_button
+        top_bar.add_widget(admin_button)
+        top_bar.add_widget(ticker_button)
+        top_bar.add_widget(Widget())
+        top_bar.add_widget(status_label)
+        self._top_bar = top_bar
+
+        content = GridLayout(
+            cols=2,
+            spacing=dp(12),
+            padding=(dp(12), dp(12)),
+            row_default_height=dp(190),
+            row_force_default=True,
+            size_hint_y=1,
+        )
+        self._cards = {}
+        for coin in CRYPTO_COINS:
+            card = self._build_coin_card(coin["label"])
+            self._cards[coin["id"]] = card
+            content.add_widget(card["container"])
+
+        layout.add_widget(top_bar)
+        layout.add_widget(content)
+        self.add_widget(layout)
+        theme = App.get_running_app().theme if App.get_running_app() else COLOR_THEME
+        self._apply_backgrounds(theme)
+        self.apply_theme(theme)
+
+    def _build_coin_card(self, label_text):
+        container = BoxLayout(
+            orientation="vertical",
+            padding=dp(10),
+            spacing=dp(6),
+        )
+        title = Label(
+            text=label_text,
+            font_size="18sp",
+            bold=True,
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(24),
+        )
+        title.bind(size=title.setter("text_size"))
+        price_label = Label(
+            text="$—",
+            font_size="22sp",
+            bold=True,
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(28),
+        )
+        price_label.bind(size=price_label.setter("text_size"))
+
+        change_row = BoxLayout(size_hint_y=None, height=dp(20), spacing=dp(8))
+        change_1h = Label(text="1h: —", halign="left", valign="middle")
+        change_24h = Label(text="24h: —", halign="left", valign="middle")
+        for label in (change_1h, change_24h):
+            label.bind(size=label.setter("text_size"))
+        change_row.add_widget(change_1h)
+        change_row.add_widget(change_24h)
+
+        sparkline = Sparkline(size_hint_y=None, height=dp(80))
+
+        for widget in (title, price_label, change_row, sparkline):
+            container.add_widget(widget)
+
+        card_bg = self._add_background(container, COLOR_THEME["surface"])
+
+        return {
+            "container": container,
+            "title": title,
+            "price": price_label,
+            "change_1h": change_1h,
+            "change_24h": change_24h,
+            "sparkline": sparkline,
+            "background": card_bg,
+        }
+
+    def _apply_backgrounds(self, theme):
+        self._layout_bg = self._add_background(self._layout, theme["background"])
+        self._top_bar_bg = self._add_background(self._top_bar, theme["surface"])
+
+    def _add_background(self, widget, color):
+        with widget.canvas.before:
+            color_instruction = Color(*color)
+            rect = Rectangle(pos=widget.pos, size=widget.size)
+
+        def update_rect(*_args):
+            rect.pos = widget.pos
+            rect.size = widget.size
+
+        widget.bind(pos=update_rect, size=update_rect)
+        return color_instruction
+
+    def apply_theme(self, theme):
+        if hasattr(self, "_layout_bg"):
+            self._layout_bg.rgba = theme["background"]
+        if hasattr(self, "_top_bar_bg"):
+            self._top_bar_bg.rgba = theme["surface"]
+        if hasattr(self, "_status_label"):
+            self._status_label.color = theme["text_secondary"]
+        for button in (
+            getattr(self, "_admin_button", None),
+            getattr(self, "_ticker_button", None),
+        ):
+            if button:
+                button.background_normal = ""
+                button.background_down = ""
+                button.background_color = theme["button"]
+                button.color = theme["text_primary"]
+        for card in getattr(self, "_cards", {}).values():
+            card["background"].rgba = theme["surface"]
+            card["title"].color = theme["text_primary"]
+            card["price"].color = theme["text_primary"]
+            for label in (card["change_1h"], card["change_24h"]):
+                if label.color not in (POSITIVE_COLOR, NEGATIVE_COLOR):
+                    label.color = theme["text_secondary"]
+            card["sparkline"].line_color = theme["accent"]
+            card["sparkline"]._redraw()
+
+    def update_data(self, data, error=None):
+        if not self._ui_built:
+            self._pending_data = data
+            self._pending_error = error
+            return
+        self._pending_data = None
+        self._pending_error = None
+        timestamp = datetime.now().strftime("%H:%M")
+        if error:
+            self._status_label.text = f"Kunne ikke hente data ({timestamp})"
+        else:
+            self._status_label.text = f"Oppdatert {timestamp}"
+        for coin in CRYPTO_COINS:
+            payload = data.get(coin["id"], {})
+            card = self._cards.get(coin["id"])
+            if not card:
+                continue
+            price = payload.get("price")
+            if price is not None:
+                card["price"].text = f"${price:,.2f}"
+            change_1h = payload.get("change_1h")
+            change_24h = payload.get("change_24h")
+            card["change_1h"].text = (
+                f"1h: {change_1h:+.2f}%"
+                if change_1h is not None
+                else "1h: —"
+            )
+            card["change_24h"].text = (
+                f"24h: {change_24h:+.2f}%"
+                if change_24h is not None
+                else "24h: —"
+            )
+            if change_1h is not None:
+                card["change_1h"].color = (
+                    POSITIVE_COLOR if change_1h >= 0 else NEGATIVE_COLOR
+                )
+            if change_24h is not None:
+                card["change_24h"].color = (
+                    POSITIVE_COLOR if change_24h >= 0 else NEGATIVE_COLOR
+                )
+            prices = payload.get("prices", [])
+            card["sparkline"].set_prices(prices, line_color=card["sparkline"].line_color)
 
 
 class TickerScreen(Screen):
@@ -586,6 +841,10 @@ class AdminScreen(Screen):
         self._ticker_input = self._settings_input()
         settings_grid.add_widget(self._ticker_input)
 
+        settings_grid.add_widget(self._settings_label("Rotation interval (seconds)"))
+        self._rotation_input = self._settings_input()
+        settings_grid.add_widget(self._rotation_input)
+
         settings_grid.add_widget(self._settings_label("Min score"))
         self._min_score_input = self._settings_input()
         settings_grid.add_widget(self._min_score_input)
@@ -670,6 +929,10 @@ class AdminScreen(Screen):
         if hasattr(self, "_min_score_input"):
             self._min_score_input.text = str(
                 get_setting("min_score", defaults.min_score)
+            )
+        if hasattr(self, "_rotation_input"):
+            self._rotation_input.text = str(
+                get_setting("rotation_seconds", defaults.rotation_seconds)
             )
         if hasattr(self, "_theme_spinner"):
             theme_value = int(get_setting("color_theme", 1))
@@ -778,21 +1041,25 @@ class AdminScreen(Screen):
         try:
             fetch_interval = int(self._fetch_input.text.strip())
             ticker_interval = int(self._ticker_input.text.strip())
+            rotation_seconds = int(self._rotation_input.text.strip())
             min_score = float(self._min_score_input.text.strip())
         except ValueError:
             self._set_status("Ugyldig format i innstillinger.")
             return
 
-        if fetch_interval <= 0 or ticker_interval <= 0:
+        if fetch_interval <= 0 or ticker_interval <= 0 or rotation_seconds <= 0:
             self._set_status("Intervaller må være større enn 0.")
             return
 
         set_setting("fetch_interval_sec", fetch_interval)
         set_setting("ticker_interval_sec", ticker_interval)
+        set_setting("rotation_seconds", rotation_seconds)
         set_setting("min_score", min_score)
         app = App.get_running_app()
         if app:
-            app.apply_settings(fetch_interval, ticker_interval, min_score)
+            app.apply_settings(
+                fetch_interval, ticker_interval, rotation_seconds, min_score
+            )
         self._set_status("Innstillinger lagret.")
 
     def _apply_theme_setting(self, theme_label):
@@ -838,6 +1105,7 @@ class AdminScreen(Screen):
 
     def _add_source_row(self, source):
         enabled_switch = Switch(active=bool(source["enabled"]))
+        weight_value = source["weight"]
         weight_input = TextInput(
             text=f'{source["weight"]:.1f}',
             multiline=False,
@@ -862,22 +1130,31 @@ class AdminScreen(Screen):
         )
         url_label.bind(size=url_label.setter("text_size"))
 
-        def apply_update(*_args):
+        def apply_weight_update(*_args):
+            nonlocal weight_value
             try:
                 weight = float(weight_input.text.strip())
             except ValueError:
                 self._set_status("Weight må være et tall.")
                 return
-            update_source(source["id"], int(enabled_switch.active), weight)
+            weight_value = weight
+            update_source(source["id"], int(enabled_switch.active), weight_value)
             app = App.get_running_app()
             if app:
                 app.reload_ticker_articles()
             self._set_status("Kilde oppdatert.")
 
-        enabled_switch.bind(on_active=lambda *_: apply_update())
-        weight_input.bind(on_text_validate=lambda *_: apply_update())
+        def apply_enabled_update(*_args):
+            update_source(source["id"], int(enabled_switch.active), weight_value)
+            app = App.get_running_app()
+            if app:
+                app.reload_ticker_articles()
+            self._set_status("Kilde oppdatert.")
+
+        enabled_switch.bind(on_active=lambda *_: apply_enabled_update())
+        weight_input.bind(on_text_validate=lambda *_: apply_weight_update())
         weight_input.bind(
-            on_focus=lambda instance, focused: not focused and apply_update()
+            on_focus=lambda instance, focused: not focused and apply_weight_update()
         )
 
         edit_button = Button(text="✎", size_hint_x=None, width=dp(50))
@@ -1448,9 +1725,11 @@ class NIEApp(App):
 
         self.sm = ScreenManager()
         self.ticker = TickerScreen(name="ticker")
+        self.crypto = CryptoScreen(name="crypto")
         self.admin = AdminScreen(name="admin")
         self.reader = ReaderScreen(name="reader")
         self.sm.add_widget(self.ticker)
+        self.sm.add_widget(self.crypto)
         self.sm.add_widget(self.admin)
         self.sm.add_widget(self.reader)
 
@@ -1463,12 +1742,23 @@ class NIEApp(App):
         self._ticker_idx = 0
         self._lock = threading.Lock()
         self._current_article = None
+        self._crypto_cache = {}
+        self._crypto_cache_time = 0.0
+        self._crypto_fetching = False
 
         threading.Thread(target=self.engine_loop, daemon=True).start()
 
         self._ticker_event = Clock.schedule_interval(
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
+        )
+        self._rotation_event = Clock.schedule_interval(
+            self.rotate_screen,
+            self.cfg.rotation_seconds,
+        )
+        self._crypto_event = Clock.schedule_interval(
+            lambda *_: self.request_crypto_update(),
+            60,
         )
 
         self._startup_theme_smoke_check()
@@ -1498,6 +1788,72 @@ class NIEApp(App):
         self.ticker.current_link = a["link"]
         self._current_article = a
 
+    def rotate_screen(self, *_):
+        if self.sm.current not in {"ticker", "crypto"}:
+            return
+        self.sm.current = "crypto" if self.sm.current == "ticker" else "ticker"
+
+    def request_crypto_update(self, force=False):
+        now = time.time()
+        if (
+            not force
+            and self._crypto_cache
+            and now - self._crypto_cache_time < 60
+        ):
+            if self.crypto:
+                self.crypto.update_data(self._crypto_cache)
+            return
+        if self._crypto_fetching:
+            return
+        self._crypto_fetching = True
+
+        def worker():
+            error_message = None
+            payload = None
+            try:
+                payload = self._fetch_crypto_data()
+            except Exception as exc:
+                logging.exception("Crypto fetch failed")
+                error_message = str(exc).strip() or exc.__class__.__name__
+
+            def apply_update(*_args):
+                self._crypto_fetching = False
+                if payload:
+                    self._crypto_cache = payload
+                    self._crypto_cache_time = time.time()
+                if self.crypto:
+                    self.crypto.update_data(self._crypto_cache, error=error_message)
+
+            Clock.schedule_once(apply_update, 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fetch_crypto_data(self):
+        ids = ",".join(coin["id"] for coin in CRYPTO_COINS)
+        url = (
+            "https://api.coingecko.com/api/v3/coins/markets"
+            f"?vs_currency=usd&ids={ids}"
+            "&sparkline=true&price_change_percentage=1h,24h"
+        )
+        with urllib.request.urlopen(url, timeout=10) as response:
+            data = json.load(response)
+        result = {}
+        for item in data:
+            coin_id = item.get("id")
+            prices = (
+                item.get("sparkline_in_7d", {}) or {}
+            ).get("price", [])
+            if prices:
+                prices = prices[-288:] if len(prices) > 288 else prices
+            result[coin_id] = {
+                "price": item.get("current_price"),
+                "change_1h": item.get("price_change_percentage_1h_in_currency"),
+                "change_24h": item.get("price_change_percentage_24h_in_currency")
+                or item.get("price_change_percentage_24h"),
+                "prices": prices,
+            }
+        return result
+
     def open_current(self):
         article = self._current_article
         if article:
@@ -1520,6 +1876,9 @@ class NIEApp(App):
 
     def show_ticker(self):
         self.sm.current = "ticker"
+
+    def show_crypto(self):
+        self.sm.current = "crypto"
 
     def show_reader(self, article):
         self._current_article = article
@@ -1567,20 +1926,29 @@ class NIEApp(App):
         self.theme = THEME_MAP[theme_index]
         if self.ticker:
             self.ticker.apply_theme(self.theme)
+        if self.crypto:
+            self.crypto.apply_theme(self.theme)
         if self.admin:
             self.admin.apply_theme(self.theme)
         if self.reader:
             self.reader.apply_theme(self.theme)
 
-    def apply_settings(self, fetch_interval, ticker_interval, min_score):
+    def apply_settings(self, fetch_interval, ticker_interval, rotation_seconds, min_score):
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
+        self.cfg.rotation_seconds = rotation_seconds
         self.cfg.min_score = min_score
         if getattr(self, "_ticker_event", None) is not None:
             self._ticker_event.cancel()
         self._ticker_event = Clock.schedule_interval(
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
+        )
+        if getattr(self, "_rotation_event", None) is not None:
+            self._rotation_event.cancel()
+        self._rotation_event = Clock.schedule_interval(
+            self.rotate_screen,
+            self.cfg.rotation_seconds,
         )
 
     def _load_settings_from_db(self):
@@ -1591,6 +1959,9 @@ class NIEApp(App):
         ticker_interval = int(
             get_setting("ticker_interval_sec", defaults.ticker_interval_sec)
         )
+        rotation_seconds = int(
+            get_setting("rotation_seconds", defaults.rotation_seconds)
+        )
         min_score = float(get_setting("min_score", defaults.min_score))
         theme_index = int(get_setting("color_theme", 1))
         if theme_index not in THEME_MAP:
@@ -1599,6 +1970,7 @@ class NIEApp(App):
         self.theme = THEME_MAP[theme_index]
         self.cfg.fetch_interval_sec = fetch_interval
         self.cfg.ticker_interval_sec = ticker_interval
+        self.cfg.rotation_seconds = rotation_seconds
         self.cfg.min_score = min_score
 
     def engine_loop(self):
