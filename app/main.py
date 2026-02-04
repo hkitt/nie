@@ -82,17 +82,28 @@ RED_BLUE_THEME = {
     "button": (0.12, 0.2, 0.45, 1),
 }
 
-THEME_CHOICES = ("Standard", "Rød/mørk blå", "Mono")
+LIGHT_GREEN_THEME = {
+    "background": (0.92, 0.96, 0.9, 1),
+    "surface": (0.86, 0.92, 0.82, 1),
+    "accent": (0.78, 0.9, 0.2, 1),
+    "text_primary": (0.12, 0.18, 0.1, 1),
+    "text_secondary": (0.2, 0.3, 0.2, 1),
+    "button": (0.7, 0.85, 0.25, 1),
+}
+
+THEME_CHOICES = ("Standard", "Rød/mørk blå", "Mono", "Lys grønn/gul")
 THEME_INDEX_BY_LABEL = {
     "Standard": 1,
     "Rød/mørk blå": 2,
     "Mono": 0,
+    "Lys grønn/gul": 3,
 }
 THEME_LABEL_BY_INDEX = {value: key for key, value in THEME_INDEX_BY_LABEL.items()}
 THEME_MAP = {
     0: MONO_THEME,
     1: COLOR_THEME,
     2: RED_BLUE_THEME,
+    3: LIGHT_GREEN_THEME,
 }
 
 CRYPTO_COINS = (
@@ -1773,7 +1784,7 @@ class NIEApp(App):
         self._schedule_rotation(self.cfg.news_rotation_seconds)
         self._crypto_event = Clock.schedule_interval(
             lambda *_: self.request_crypto_update(),
-            60,
+            self.cfg.fetch_interval_sec,
         )
 
         self._startup_theme_smoke_check()
@@ -1824,7 +1835,7 @@ class NIEApp(App):
         if (
             not force
             and self._crypto_cache
-            and now - self._crypto_cache_time < 60
+            and now - self._crypto_cache_time < self.cfg.fetch_interval_sec
         ):
             if self.crypto:
                 self.crypto.update_data(self._crypto_cache)
@@ -1978,6 +1989,12 @@ class NIEApp(App):
             self.rotate_ticker,
             self.cfg.ticker_interval_sec,
         )
+        if getattr(self, "_crypto_event", None) is not None:
+            self._crypto_event.cancel()
+        self._crypto_event = Clock.schedule_interval(
+            lambda *_: self.request_crypto_update(),
+            self.cfg.fetch_interval_sec,
+        )
         rotation_delay = (
             self.cfg.news_rotation_seconds
             if self.sm.current == "ticker"
@@ -2082,6 +2099,15 @@ class NIEApp(App):
                 failed_sources += 1
                 logging.exception("Feed fetch failed for %s", s["url"])
                 continue
+            current_guids = {it["guid"] for it in items if it.get("guid")}
+            if current_guids:
+                placeholders = ",".join("?" for _ in current_guids)
+                con.execute(
+                    f"""DELETE FROM articles
+                        WHERE source_name = ?
+                          AND guid NOT IN ({placeholders})""",
+                    (s["name"], *current_guids),
+                )
             for it in items:
                 base_score = score_article(
                     it["title"],
