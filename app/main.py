@@ -619,6 +619,8 @@ class AdminScreen(Screen):
             getattr(self, "_refresh_button", None),
             getattr(self, "_exit_button", None),
             getattr(self, "_fetch_update_button", None),
+            getattr(self, "_save_sources_button", None),
+            getattr(self, "_save_categories_button", None),
         ):
             if button:
                 button.background_normal = ""
@@ -693,6 +695,13 @@ class AdminScreen(Screen):
         )
         sources_title.bind(size=sources_title.setter("text_size"))
         content.add_widget(sources_title)
+
+        sources_actions = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        save_sources = Button(text="Lagre endringer")
+        save_sources.bind(on_release=lambda *_: self._save_sources())
+        sources_actions.add_widget(save_sources)
+        content.add_widget(sources_actions)
+        self._save_sources_button = save_sources
 
         self.sources_grid = GridLayout(
             cols=6,
@@ -788,6 +797,15 @@ class AdminScreen(Screen):
         )
         categories_title.bind(size=categories_title.setter("text_size"))
         content.add_widget(categories_title)
+
+        categories_actions = BoxLayout(
+            size_hint_y=None, height=dp(36), spacing=dp(8)
+        )
+        save_categories = Button(text="Lagre endringer")
+        save_categories.bind(on_release=lambda *_: self._save_categories())
+        categories_actions.add_widget(save_categories)
+        content.add_widget(categories_actions)
+        self._save_categories_button = save_categories
 
         self.categories_grid = GridLayout(
             cols=6,
@@ -907,6 +925,7 @@ class AdminScreen(Screen):
         for widget in list(grid.children):
             if widget not in header_widgets:
                 grid.remove_widget(widget)
+        self._source_rows = []
 
         sources = list_sources()
         if not sources:
@@ -922,6 +941,7 @@ class AdminScreen(Screen):
         for widget in list(grid.children):
             if widget not in header_widgets:
                 grid.remove_widget(widget)
+        self._category_rows = []
 
         categories = list_categories()
         if not categories:
@@ -1198,6 +1218,13 @@ class AdminScreen(Screen):
         self.sources_grid.add_widget(url_label)
         self.sources_grid.add_widget(edit_button)
         self.sources_grid.add_widget(delete_button)
+        self._source_rows.append(
+            {
+                "id": source["id"],
+                "weight_input": weight_input,
+                "enabled_switch": enabled_switch,
+            }
+        )
 
     def _edit_source_popup(self, source):
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
@@ -1390,6 +1417,52 @@ class AdminScreen(Screen):
         self.categories_grid.add_widget(keywords_label)
         self.categories_grid.add_widget(edit_button)
         self.categories_grid.add_widget(delete_button)
+        self._category_rows.append(
+            {
+                "id": category["id"],
+                "name": category["name"],
+                "keywords": category["keywords"],
+                "weight_input": weight_input,
+                "enabled_switch": enabled_switch,
+            }
+        )
+
+    def _save_sources(self):
+        rows = getattr(self, "_source_rows", [])
+        if not rows:
+            self._set_status("Ingen kilder å lagre.")
+            return
+        for row in rows:
+            try:
+                weight = float(row["weight_input"].text.strip())
+            except ValueError:
+                self._set_status("Weight må være et tall.")
+                return
+            update_source(row["id"], int(row["enabled_switch"].active), weight)
+        app = App.get_running_app()
+        if app:
+            app.reload_ticker_articles()
+        self._set_status("Kilder lagret.")
+
+    def _save_categories(self):
+        rows = getattr(self, "_category_rows", [])
+        if not rows:
+            self._set_status("Ingen kategorier å lagre.")
+            return
+        for row in rows:
+            try:
+                weight = float(row["weight_input"].text.strip())
+            except ValueError:
+                self._set_status("Weight må være et tall.")
+                return
+            update_category(
+                row["id"],
+                row["name"],
+                row["keywords"],
+                weight,
+                int(row["enabled_switch"].active),
+            )
+        self._set_status("Kategorier lagret.")
 
     def _edit_category_popup(self, category):
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
